@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 546)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 549)}
 
         observed_ids = set()
 
@@ -321,7 +321,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
         self.assertNotIn("Write-Host $MSSQL_SA_PASSWORD", schema_helper)
         self.assertNotIn('-s "|"', schema_helper)
 
-    def test_alameen_numbering_stays_fail_closed_until_cross_table_rules_are_proven(self):
+    def test_alameen_numbering_uses_only_observed_graph_safe_rules(self):
         backend = read_text("business/control_plane.tru")
         merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
         audit = read_text("docs/alameen-numbering-schema-audit-2026-09-04.md")
@@ -330,17 +330,28 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
         self.assertIn("localTable != 'ce000'", backend)
         self.assertIn("localTable != 'bu000'", backend)
+        self.assertIn("localTable != 'mt000'", backend)
         self.assertIn("? 'TypeGUID' : 'Type'", backend)
+        self.assertIn("logicalKeyColumnSets: [[numberColumn]]", backend)
+        self.assertIn("scopeColumns: []", backend)
         self.assertIn("SET relation.[ParentNumber] = header.[Number]", merge)
         self.assertIn("SET source.[ParentNumber] = header.[Number]", merge)
         self.assertIn("`bu000` | `GUID` | `TypeGUID, Number, Branch`", audit)
         self.assertIn("`mt000` | `GUID` | None", audit)
         self.assertIn("`er000` stores both `ParentGUID` and `ParentNumber`", audit)
         self.assertIn("Enroll `bu000` in automatic number reservation", audit)
-        self.assertIn("Do not enroll `mt000` until a controlled two-copy", audit)
+        self.assertIn("Enroll `mt000` in owner-wide automatic number reservation", audit)
         self.assertIn("Implementation feasibility review (2026-09-05)", audit)
         self.assertIn("does not retain the intermediate row images", audit)
-        self.assertIn("same-number material experiment in two isolated copies", audit)
+        self.assertIn("same-number material experiment now also proves", audit)
+        material_collision = read_text(
+            "docs/alameen-two-client-material-number-collision-observation-2026-09-07.md"
+        )
+        self.assertIn("`209812`", material_collision)
+        self.assertIn("`B3B00555-B6F1-4484-B53B-098BD31F58E2`", material_collision)
+        self.assertIn("`B657F231-CBBC-4F38-A125-C4B4FB81879C`", material_collision)
+        self.assertIn("No SQL foreign key references `dbo.mt000`", material_collision)
+        self.assertIn("material-number allocator implemented", progress)
         self.assertIn("`bu000.Number` | `1614` | `1614`", collision)
         self.assertIn("`ce000.Number` | `2320` | `2320`", collision)
         self.assertIn("Selecting one client as authoritative would therefore destroy a real", collision)

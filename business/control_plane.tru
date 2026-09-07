@@ -3925,7 +3925,8 @@ function automatic_number_inventory_required(ownerUserId: string, table: string)
   const reference = sync_table_reference(table);
   const localTable = string.from(reference.table).trim().toLowerCase();
   if (localTable != 'ce000' && localTable != 'dbo.ce000' &&
-      localTable != 'bu000' && localTable != 'dbo.bu000') {
+      localTable != 'bu000' && localTable != 'dbo.bu000' &&
+      localTable != 'mt000' && localTable != 'dbo.mt000') {
     return false;
   }
   const rows = db.selectMany(AutoNumberSequence, {
@@ -6336,20 +6337,37 @@ function automatic_number_rule(table: string, columns: array<string>, keyColumns
   const reference = sync_table_reference(table);
   const localTable = string.from(reference.table).trim().toLowerCase();
   if (localTable != 'ce000' && localTable != 'dbo.ce000' &&
-      localTable != 'bu000' && localTable != 'dbo.bu000') {
+      localTable != 'bu000' && localTable != 'dbo.bu000' &&
+      localTable != 'mt000' && localTable != 'dbo.mt000') {
     return null;
   }
   const guidColumn = resolve_sync_column(columns, 'GUID');
+  const numberColumn = resolve_sync_column(columns, 'Number');
+  if (guidColumn.length == 0 || numberColumn.length == 0 ||
+      keyColumns.length != 1 ||
+      string.from(keyColumns[0]).trim().toLowerCase() != guidColumn.toLowerCase()) {
+    return null;
+  }
+  if (localTable == 'mt000' || localTable == 'dbo.mt000') {
+    // Al-Ameen 8.1 does not declare Number unique, but two isolated application
+    // copies assign the same next Number to distinct material GUIDs. Every
+    // observed material, stock, Sales/Purchase, price, and barcode relationship
+    // uses the permanent material GUID, so Number is the validated owner-wide
+    // allocation key and needs no child rewrite.
+    return {
+      table: localTable,
+      guidColumn,
+      numberColumn,
+      scopeColumns: [],
+      logicalKeyColumnSets: [[numberColumn]]
+    };
+  }
   const typeColumn = resolve_sync_column(
     columns,
     (localTable == 'bu000' || localTable == 'dbo.bu000') ? 'TypeGUID' : 'Type'
   );
-  const numberColumn = resolve_sync_column(columns, 'Number');
   const branchColumn = resolve_sync_column(columns, 'Branch');
-  if (guidColumn.length == 0 || typeColumn.length == 0 ||
-      numberColumn.length == 0 || branchColumn.length == 0 ||
-      keyColumns.length != 1 ||
-      string.from(keyColumns[0]).trim().toLowerCase() != guidColumn.toLowerCase()) {
+  if (typeColumn.length == 0 || branchColumn.length == 0) {
     return null;
   }
   let verifiedUniqueKey = false;
@@ -6369,15 +6387,45 @@ function automatic_number_rule(table: string, columns: array<string>, keyColumns
     table: localTable,
     guidColumn,
     numberColumn,
-    scopeColumns: [typeColumn, branchColumn]
+    scopeColumns: [typeColumn, branchColumn],
+    logicalKeyColumnSets: [[typeColumn, numberColumn, branchColumn]]
   };
 }
 
+function automatic_number_logical_key_column_sets(rule: map<json>? = null, uniqueKeyColumnSets: array<json>? = null): array<json> {
+  let result = uniqueKeyColumnSets ?? [];
+  if (rule == null) {
+    return result;
+  }
+  for (const rawSet of rule.logicalKeyColumnSets ?? []) {
+    const columnSet = rawSet ?? [];
+    let alreadyPresent = false;
+    for (const existingSet of result) {
+      if (json.stringify(existingSet ?? []) == json.stringify(columnSet)) {
+        alreadyPresent = true;
+      }
+    }
+    if (!alreadyPresent && columnSet.length > 0) {
+      result = result.concat([columnSet]);
+    }
+  }
+  return result;
+}
+
 function automatic_number_scope(ownerUserId: string, table: string, rule: map<json>, row: map<json>): map<json> {
-  const typeColumn = string.from(rule.scopeColumns[0]);
-  const branchColumn = string.from(rule.scopeColumns[1]);
-  const values = [row[typeColumn], row[branchColumn]];
+  const scopeColumns = rule.scopeColumns ?? [];
+  let values = [];
+  for (const rawColumn of scopeColumns) {
+    values = values.concat([row[string.from(rawColumn)]]);
+  }
   const scopeKey = crypto.hash(json.stringify(values), 'sha256');
+  let publicScope = {};
+  if (scopeColumns.length == 2) {
+    publicScope = {
+      Type: row[string.from(scopeColumns[0])],
+      Branch: row[string.from(scopeColumns[1])]
+    };
+  }
   return {
     id: crypto.hash(json.stringify([
       ownerUserId.trim(),
@@ -6385,10 +6433,7 @@ function automatic_number_scope(ownerUserId: string, table: string, rule: map<js
       scopeKey
     ]), 'sha256'),
     scopeKey,
-    scope: {
-      Type: row[typeColumn],
-      Branch: row[branchColumn]
-    }
+    scope: publicScope
   };
 }
 
@@ -10434,6 +10479,16 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
   const winnerPolicyApplied = payloadIsDelta || multiClientUnionBootstrap;
   const winnerOwnerUserId = string.from(batch.ownerUserId ?? '').trim();
   const winnerTable = string.from(batch.table);
+  const autoNumberRule = automatic_number_rule(
+    winnerTable,
+    resolvedColumns,
+    resolvedKeyColumns,
+    resolvedUniqueKeyColumnSets
+  );
+  const winnerLogicalKeyColumnSets = automatic_number_logical_key_column_sets(
+    autoNumberRule,
+    resolvedUniqueKeyColumnSets
+  );
   let conflictSourceClient = '';
   if (batch.conflictSourceClient == null) {
     conflictSourceClient = conflict_source_client_for_owner(winnerOwnerUserId);
@@ -10458,7 +10513,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             winnerOwnerUserId,
             winnerTable,
             incomingRow,
-            resolvedUniqueKeyColumnSets
+            winnerLogicalKeyColumnSets
           ).map((value) => string.from(value.id))
         );
       }
@@ -10559,12 +10614,6 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       }
     }
   }
-  const autoNumberRule = automatic_number_rule(
-    winnerTable,
-    resolvedColumns,
-    resolvedKeyColumns,
-    resolvedUniqueKeyColumnSets
-  );
   let currentAutoNumberSequences = [];
   let currentAutoNumberIncidents = [];
   if (autoNumberRule != null) {
@@ -10699,6 +10748,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     let pendingAutoNumberSequences = [];
     let pendingAutoNumberIncidents = [];
     let pendingAutoNumberReservations = [];
+    let automaticNumberInventoryRequired = false;
     for (const incomingRow of effectiveIncomingRows) {
       const operationId = string.from(incomingRow.__sync_operation_id ?? '').trim();
       let accepted = true;
@@ -10747,7 +10797,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             winnerOwnerUserId,
             winnerTable,
             incomingRow,
-            resolvedUniqueKeyColumnSets
+            winnerLogicalKeyColumnSets
           );
         }
         if (operation != 'D' && autoNumberRule != null) {
@@ -10911,7 +10961,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
               );
               if (existingIncident == null) {
                 incidentStatus = 'reserved';
-                incidentReason = 'A different primary identity already owned this voucher number. The server reserved the next owner-wide free number while preserving the GUID and child links.';
+                incidentReason = 'A different primary identity already owned this business number. The server reserved the next owner-wide free number while preserving the GUID and child links.';
               }
               automaticNumberDirective = {
                 incidentId,
@@ -10923,12 +10973,16 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
                 winnerOwnerUserId,
                 winnerTable,
                 incomingRow,
-                resolvedUniqueKeyColumnSets,
+                winnerLogicalKeyColumnSets,
                 numberColumn,
                 allocatedNumber
               );
             } else {
               accepted = false;
+              if (string.from(job.automaticRetryKind ?? '').trim() !=
+                  'automatic-number-inventory') {
+                automaticNumberInventoryRequired = true;
+              }
             }
             let afterRow = json.parse(json.stringify(incomingRow));
             if (afterNumber.length != 0) {
@@ -10969,7 +11023,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
                 conflictingClientName: existingIncident.conflictingClientName,
                 table: existingIncident.table,
                 status: 'reserved',
-                reason: 'A different primary identity already owned this voucher number. The server refreshed the complete inventory and reserved the next owner-wide free number while preserving the GUID and child links.',
+                reason: 'A different primary identity already owned this business number. The server refreshed the complete inventory and reserved the next owner-wide free number while preserving the GUID and child links.',
                 numberColumn: existingIncident.numberColumn,
                 beforeNumber: existingIncident.beforeNumber,
                 afterNumber,
@@ -11279,7 +11333,8 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
     });
     return {
       ok: true,
-      acceptedRowCount: acceptedRows.length
+      acceptedRowCount: acceptedRows.length,
+      automaticNumberInventoryRequired
     };
   });
   if (acceptance == null || acceptance.ok != true) {
@@ -11289,6 +11344,27 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       storage.delete(storageId);
     }
     return raw_json_error(409, 'sync batch changed while uploading; retry this chunk');
+  }
+  if (acceptance.automaticNumberInventoryRequired == true) {
+    const replan = jobs_fail(
+      job.id,
+      'Automatic numbering stopped this batch before download because its complete owner-wide number inventory is not initialized.',
+      100,
+      token,
+      'automatic_number_inventory_required'
+    );
+    return raw_json_success({
+      job: replan.job ?? public_job_payload(job),
+      batchId,
+      acceptedRows: 0,
+      staleRowsIgnored: incomingRowCount,
+      mergedRowCount: 0,
+      uploadedClients,
+      expectedClientCount: batch.expectedClients.length,
+      ready: false,
+      clientChangeTrackingVersions,
+      automaticNumberInventoryReplanned: true
+    });
   }
   const acceptedRowCount = int.from(acceptance.acceptedRowCount ?? 0);
   const staleRowCount = incomingRowCount - acceptedRowCount;
@@ -13382,12 +13458,15 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     nextProgress = progress;
   }
   const baselineReplan = failureKind.trim().toLowerCase() == 'baseline_required';
+  const automaticNumberInventoryReplan =
+    failureKind.trim().toLowerCase() == 'automatic_number_inventory_required';
+  const safeReplan = baselineReplan || automaticNumberInventoryReplan;
   db.delete(UploadSession, { jobId });
   db.delete(DownloadSession, { jobId });
   const completedAt = now_iso();
   let failureError = null;
   let batchFailureError = null;
-  if (!baselineReplan) {
+  if (!safeReplan) {
     failureError = message;
     batchFailureError = string.concat('Atomic batch failed: ', message);
   }
@@ -13402,7 +13481,7 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     publisherUseWindowsAuth: job.publisherUseWindowsAuth,
     publisherUser: job.publisherUser,
     publisherPassword: job.publisherPassword,
-    status: baselineReplan ? 'cancelled' : 'failed',
+    status: safeReplan ? 'cancelled' : 'failed',
     progress: nextProgress,
     rowCount: job.rowCount,
     snapshotBytes: job.snapshotBytes,
@@ -13414,7 +13493,9 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     error: failureError,
     message: baselineReplan
       ? 'Delta cancelled safely because its Change Tracking cursor was unavailable; queued for an all-client baseline replan.'
-      : message,
+      : automaticNumberInventoryReplan
+        ? 'Batch cancelled before download; a complete all-client number inventory was queued automatically.'
+        : message,
     clientUserId: job.clientUserId,
     ownerUserId: job.ownerUserId,
     updatedAt: completedAt
@@ -13443,19 +13524,27 @@ function jobs_fail(jobId: string, message: string, progress: int? = null, token:
     const activeBatchJobIds = activeBatchJobs.map((batchJob) => string.from(batchJob.id));
     if (activeBatchJobIds.length != 0) {
       db.updateMany(SyncJob, { id: { in: activeBatchJobIds } }, {
-        status: baselineReplan ? 'cancelled' : 'failed',
+        status: safeReplan ? 'cancelled' : 'failed',
         progress: 100,
         completedAt,
         error: batchFailureError,
         message: baselineReplan
           ? 'Atomic delta batch cancelled safely and queued for an all-client baseline replan.'
-          : string.concat('Atomic batch failed: ', message),
+          : automaticNumberInventoryReplan
+            ? 'Atomic batch cancelled before download and queued for a complete all-client number inventory.'
+            : string.concat('Atomic batch failed: ', message),
         updatedAt: completedAt
       });
     }
     cleanup_multi_writer_batch_storage(failedBatchId);
     if (automaticNumberCollision &&
         string.from(job.automaticRetryKind ?? '').trim() != 'automatic-number-retry') {
+      queue_automatic_number_inventory_recovery(
+        string.from(job.ownerUserId),
+        string.from(job.table)
+      );
+    }
+    if (automaticNumberInventoryReplan) {
       queue_automatic_number_inventory_recovery(
         string.from(job.ownerUserId),
         string.from(job.table)

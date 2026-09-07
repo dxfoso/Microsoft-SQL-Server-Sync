@@ -2319,6 +2319,68 @@ ALTER TABLE dbo.er000 ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON);
         if rows != expected_graph:
             raise AssertionError(f"Al-Ameen header/relation renumber graph did not converge in {database}: {rows}")
 
+    # Al-Ameen 8.1 independently assigned visible material number 209812 to
+    # two different permanent GUIDs. The database does not declare Number
+    # unique, so the server must treat it as an application business key,
+    # preserve both GUIDs, and deliver the later material under the reserved
+    # owner-wide number. Material relations use GUID and require no rewrite.
+    material_1 = "B3B00555-B6F1-4484-B53B-098BD31F58E2"
+    material_2 = "B657F231-CBBC-4F38-A125-C4B4FB81879C"
+    material_columns = [
+        {"name": "GUID", "sqlType": "uniqueidentifier", "maxLength": 16, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+        {"name": "Number", "sqlType": "int", "maxLength": 4, "precision": 10, "scale": 0, "isIdentity": False, "isComputed": False},
+        {"name": "Name", "sqlType": "nvarchar", "maxLength": 200, "precision": 0, "scale": 0, "isIdentity": False, "isComputed": False},
+    ]
+    for database in DATABASES:
+        sqlcmd(
+            """
+CREATE TABLE dbo.mt000 (
+  GUID uniqueidentifier NOT NULL PRIMARY KEY,
+  Number int NOT NULL,
+  Name nvarchar(100) NOT NULL
+);
+ALTER TABLE dbo.mt000 ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON);
+""",
+            database=database,
+        )
+    sqlcmd(
+        f"INSERT dbo.mt000 VALUES ('{material_1}',209812,N'SYNC TEST ALSHALLAN');",
+        database=DATABASES[0],
+    )
+    sqlcmd(
+        f"INSERT dbo.mt000 VALUES ('{material_2}',209812,N'SYNC TEST VELVET');",
+        database=DATABASES[1],
+    )
+    canonical_materials = [
+        {"GUID": material_1, "Number": 209812, "Name": "SYNC TEST ALSHALLAN"},
+        {"GUID": material_2, "Number": 209813, "Name": "SYNC TEST VELVET"},
+    ]
+    for database in DATABASES:
+        apply(
+            database,
+            table="mt000",
+            columns=material_columns,
+            primary_key_columns=["GUID"],
+            rows=canonical_materials,
+        )
+        material_rows = sqlcmd(
+            "SELECT CONCAT(CONVERT(nvarchar(36), GUID), N'|', Number, N'|', Name) FROM dbo.mt000 ORDER BY Number;",
+            database=database,
+        ).stdout
+        normalized_material_rows = sorted(
+            line.strip().replace(" ", "").lower()
+            for line in material_rows.splitlines()
+            if "|" in line
+        )
+        expected_material_rows = sorted([
+            f"{material_1.lower()}|209812|synctestalshallan",
+            f"{material_2.lower()}|209813|synctestvelvet",
+        ])
+        if normalized_material_rows != expected_material_rows:
+            raise AssertionError(
+                f"Al-Ameen material-number reservation did not preserve both GUIDs in {database}: {normalized_material_rows}"
+            )
+
     # Different permanent IDs that collide on a SQL unique/business key are
     # different documents, not versions of one row. The client must roll the
     # whole batch back until the server supplies a reserved replacement key.
@@ -2527,6 +2589,7 @@ ENABLE TRIGGER dbo.TR_SyncItems_Protect ON dbo.SyncItems;
             "offline-peer-online-continuity-and-reconnect-catch-up",
             "business-key-collision-fails-closed-then-reserved-key-applies",
             "alameen-bu000-collision-renumbers-er000-by-parent-guid",
+            "alameen-mt000-collision-preserves-guids-with-reserved-number",
             "invoice-line-primary-key-union-explicit-delete-arabic-atomic-retry",
             "large-1200-row-batch", "idempotent-retry",
             "complete-reconcile-preserves-target-only-unicode-retry",

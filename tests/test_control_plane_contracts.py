@@ -22,9 +22,13 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("function automatic_number_rule(", source)
         self.assertIn("localTable != 'ce000'", source)
         self.assertIn("localTable != 'bu000'", source)
+        self.assertIn("localTable != 'mt000'", source)
         self.assertIn("? 'TypeGUID' : 'Type'", source)
         self.assertIn("columnSet.length == 3", source)
         self.assertIn("columnSet[1]).trim().toLowerCase() == numberColumn", source)
+        self.assertIn("logicalKeyColumnSets: [[numberColumn]]", source)
+        self.assertIn("function automatic_number_logical_key_column_sets(", source)
+        self.assertIn("winnerLogicalKeyColumnSets", upload)
         self.assertIn("completeMultiClientUnionBootstrap && ready", upload)
         self.assertIn("sequence.initialized == true", upload)
         self.assertIn("!= 'automatic-number-inventory'", upload)
@@ -57,6 +61,25 @@ class ControlPlaneContractsTests(unittest.TestCase):
             upload.index("automatic_number_incident_find_by_physical_key("),
             upload.index("maximumObserved) + 1"),
         )
+
+    def test_uninitialized_number_collision_replans_before_any_download(self):
+        source = read_text("business/control_plane.tru")
+        upload = source.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+        failure = source.split("function jobs_fail(", 1)[1].split(
+            "function jobs_cancel_active", 1
+        )[0]
+
+        self.assertIn("let automaticNumberInventoryRequired = false", upload)
+        self.assertIn("automaticNumberInventoryRequired = true", upload)
+        self.assertIn("acceptance.automaticNumberInventoryRequired == true", upload)
+        self.assertIn("'automatic_number_inventory_required'", upload)
+        self.assertIn("automaticNumberInventoryReplanned: true", upload)
+        self.assertIn("const automaticNumberInventoryReplan =", failure)
+        self.assertIn("const safeReplan = baselineReplan || automaticNumberInventoryReplan", failure)
+        self.assertIn("queue_automatic_number_inventory_recovery(", failure)
+        self.assertIn("Batch cancelled before download", failure)
 
     def test_automatic_number_inventory_is_complete_and_collision_retry_is_bounded(self):
         source = read_text("business/control_plane.tru")
@@ -101,6 +124,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "if (multiClientUnionBootstrap && ready)", upload
         )
         self.assertIn("automatic_number_inventory_required(", planner)
+        inventory_guard = source.split(
+            "function automatic_number_inventory_required(", 1
+        )[1].split("function sync_range_manifest_parts", 1)[0]
+        self.assertIn("localTable != 'mt000'", inventory_guard)
         self.assertIn("mode: 'union_bootstrap'", planner)
         self.assertIn(
             "string.from(existingIncident.afterNumber ?? '').trim().length == 0",
@@ -2226,7 +2253,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("mode: 'union_bootstrap'", planner)
         self.assertIn("failureKind: string = ''", source)
         self.assertIn("failureKind.trim().toLowerCase() == 'baseline_required'", failure)
-        self.assertIn("status: baselineReplan ? 'cancelled' : 'failed'", failure)
+        self.assertIn("const safeReplan = baselineReplan || automaticNumberInventoryReplan", failure)
+        self.assertIn("status: safeReplan ? 'cancelled' : 'failed'", failure)
         self.assertIn("mark_agent_table_baseline_pending", failure)
         self.assertIn("pendingTables.concat([string.from(job.table)])", failure)
 

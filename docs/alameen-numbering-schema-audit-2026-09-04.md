@@ -10,7 +10,7 @@ This was a read-only catalog inspection of the checksum-verified pre-input backu
 |---|---|---|---|
 | `ce000` | `GUID` | `Type, Number, Branch` | The existing voucher allocator has a database-proven collision key and scope. |
 | `bu000` | `GUID` | `TypeGUID, Number, Branch` | Sales/Purchase headers have a database-proven collision key; the two-copy observation now proves that independent copies allocate the same number to distinct GUIDs. |
-| `mt000` | `GUID` | None | `Number` has a non-unique index only. The database permits duplicate material numbers; application semantics and a safe allocator scope cannot be inferred from SQL metadata. |
+| `mt000` | `GUID` | None | `Number` has a non-unique index, but the 2026-09-07 two-copy application observation proves it is an independently allocated visible business number that collides across offline copies. |
 | `MatExBarcode000` | `Guid` | `Barcode, MatGuid` | This does not establish uniqueness for `mt000.Number`. |
 
 The restored data currently contains zero duplicate `mt000.Number` values and zero duplicate `bu000(TypeGUID, Number, Branch)` values. Absence of existing duplicates is not proof that changing a material number is safe.
@@ -21,18 +21,18 @@ The restored data currently contains zero duplicate `mt000.Number` values and ze
 
 Header-only renumbering would still be unsafe. The implemented graph rule preserves the permanent `bu000.GUID`, reserves the next free number within `TypeGUID, Branch`, and rewrites every existing `er000.ParentNumber` selected by `ParentGUID` in the same SQL transaction and `SQLSYNC` Change Tracking context. Applying an `er000` job also derives the redundant value from the current `bu000` parent before merge, so job order or retry cannot revert the reservation.
 
-Material dependents observed so far (`bi000`, `ms000`, `cp000`, and `MatExBarcode000`) link through the material GUID. That makes GUID preservation promising, but it does not prove that Al-Ameen accepts two physical materials with the same visible number or that no unobserved table/configuration stores the material number. A controlled two-copy Al-Ameen application test is required before enabling an `mt000` allocator.
+The controlled 2026-09-07 material experiment produced two different material GUIDs with the same application-assigned `Number=209812`. Material dependents observed in the complete mapped workflows (`bi000`, `ms000`, `cp000`, and `MatExBarcode000`) link through the material GUID. A second disposable-backup catalog scan found zero SQL foreign keys to `mt000`, 119 material-named columns of which 91 are GUIDs, and zero material-number-named columns. The validated rule can therefore renumber only `mt000.Number` while retaining the permanent GUID and its mapped children. This remains scoped evidence, not a mapping of every optional module among all 563 tables. Exact rows and artifacts are recorded in `docs/alameen-two-client-material-number-collision-observation-2026-09-07.md`.
 
 ## Fail-closed decision
 
 1. Keep the existing `ce000` automatic voucher-number rule.
 2. Enroll `bu000` in automatic number reservation only with the atomic `er000.ParentNumber` rewrite and relation-side derivation guarded by the three-client regression.
-3. Do not enroll `mt000` until a controlled two-copy Al-Ameen test proves the material-number business invariant and a complete dependency scan proves the rewrite set.
+3. Enroll `mt000` in owner-wide automatic number reservation using `Number` as its observed application business key, an empty/global table scope, permanent GUID preservation, and no child-number rewrite.
 4. Keep production Sales/Purchase synchronization disabled until the separate INC-403 complete-document boundary is proven. A timing delay, upload order, or arbitrary authoritative client is not a safe substitute.
 
-## Exact next external evidence required
+## Completed external evidence
 
-Using the same two isolated database copies, create one new material independently in each copy so Al-Ameen assigns the same local number. Before any synchronization, inspect both final rows and reopen/search both materials in Al-Ameen. This determines whether duplicate visible numbers are rejected, silently ambiguous, or supported. The same-number Sales experiment is complete; Purchase collision handling shares the same proven `bu000`/`er000` structure but production activation still awaits the complete-document boundary.
+The same two isolated database copies independently assigned number `209812` to GUIDs `B3B00555-B6F1-4484-B53B-098BD31F58E2` and `B657F231-CBBC-4F38-A125-C4B4FB81879C`. Synchronization was stopped before the generic pre-fix merge could place duplicate visible numbers in one database. The bounded deltas and disposable dependency scan now supply the evidence required for the scoped `mt000` allocator. Purchase collision handling shares the proven `bu000`/`er000` structure, while general production activation still awaits the separate complete-document boundary.
 
 ## Implementation feasibility review (2026-09-05)
 
@@ -40,4 +40,4 @@ The retained bounded delta proves the final Sales state across versions 5769 and
 
 The official SyrianSoft public site was checked for an Al-Ameen 8.1 database transaction marker, schema contract, synchronization interface, or numbering API. Its public product, download, contact, and technical-support entry points do not publish that contract. Vendor support may still provide private documentation, but none is available in this repository or on the public vendor site.
 
-The same-number Sales experiment is now complete and proves the `bu000`/`ce000` collision plus the `er000` rewrite set. It makes automatic header/voucher number reservation implementable, but it does not supply the missing intermediate row images for the earlier two-commit Sales edit. The safe remaining evidence is to capture both phases of that known workflow and run the same-number material experiment in two isolated copies. `mt000` stays outside automatic allocation, and production Sales/Purchase synchronization stays disabled until the completion invariant is proven.
+The same-number Sales experiment proves the `bu000`/`ce000` collision plus the `er000` rewrite set. The same-number material experiment now also proves the `mt000` collision and its GUID-preserving owner-wide allocation scope. Neither experiment supplies the missing intermediate row images for the earlier two-commit Sales edit, so general production Sales/Purchase synchronization remains disabled until that completion invariant is proven.
