@@ -140,11 +140,13 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("'automatic-number-retry'", failure)
         inventory_queue = source.split(
             "function queue_automatic_number_inventory_recovery(", 1
-        )[1].split("function queue_automatic_number_delta_retry", 1)[0]
+        )[1].split("function automatic_number_unreserved_union_collision", 1)[0]
         self.assertIn("'automatic-number-inventory'", inventory_queue)
         self.assertIn("\n    true,\n    true,", inventory_queue)
         self.assertIn("resolve_automatic_number_batch_incidents", completion)
-        self.assertIn("queue_automatic_number_delta_retry", completion)
+        self.assertIn("queue_automatic_number_full_union_retry", completion)
+        self.assertIn("Change Tracking cursor can legitimately have", completion)
+        self.assertNotIn("queue_automatic_number_delta_retry", source)
         self.assertIn("const automaticNumberInventoryOnly =", download)
         self.assertIn("acceptedOperationIds = [];", download)
         self.assertIn("chunkPayloadBase64 = '';", download)

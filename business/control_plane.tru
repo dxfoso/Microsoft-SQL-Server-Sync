@@ -6653,27 +6653,6 @@ function queue_automatic_number_inventory_recovery(ownerUserId: string, table: s
   );
 }
 
-function queue_automatic_number_delta_retry(ownerUserId: string, table: string): array<json> {
-  if (string_array_contains(active_job_tables_for_owner(ownerUserId), table)) {
-    return [];
-  }
-  const syncScope = automatic_number_sync_participants(ownerUserId, table);
-  if (!automatic_number_participants_online(syncScope.participants ?? [])) {
-    return [];
-  }
-  return create_multi_writer_batch(
-    ownerUserId,
-    table,
-    syncScope.participants ?? [],
-    '',
-    false,
-    false,
-    syncScope.policies ?? [],
-    'automatic-number-retry',
-    ''
-  );
-}
-
 // A first full union can discover a business-number collision while it is
 // simultaneously establishing the complete owner-wide maximum. The colliding
 // row is deliberately rejected during that inventory pass, so a target that
@@ -10903,7 +10882,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             ]), 'sha256');
             let afterNumber = '';
             let incidentStatus = 'blocked';
-            let incidentReason = 'A different primary identity already owns the same SQL unique business key. Automatic numbering is waiting for a complete multi-client number inventory.';
+            let incidentReason = 'A different primary identity already owns the same application business number. Automatic numbering is waiting for a complete multi-client number inventory.';
             let existingIncident = automatic_number_incident_find_by_operation(
               currentAutoNumberIncidents,
               operationId
@@ -13422,7 +13401,12 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
       completedAt
     );
     if (sync_batch_automatic_retry_kind(completedBatchId) == 'automatic-number-inventory') {
-      queue_automatic_number_delta_retry(
+      // The client acknowledged the safely cancelled delta upload before this
+      // inventory pass, so its Change Tracking cursor can legitimately have
+      // advanced past the colliding operation. Replay a bounded complete union
+      // to recover the original row by permanent identity; a delta retry could
+      // contain zero rows and strand the incident indefinitely.
+      queue_automatic_number_full_union_retry(
         string.from(job.ownerUserId),
         string.from(job.table)
       );
