@@ -191,6 +191,8 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )[0]
         self.assertNotIn("db.updateMany(", convergence_loop)
         self.assertIn("id: { in: resolvedIncidentIds }", convergence)
+        self.assertIn("if (cache != null)", convergence)
+        self.assertNotIn("cache == null ? [] : cache.tables", convergence)
         self.assertIn("resolve_converged_automatic_number_incidents(ownerUserId)", heartbeat)
         self.assertNotIn("resolve_automatic_number_batch_incidents(", completion)
 

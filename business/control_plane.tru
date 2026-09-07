@@ -6823,8 +6823,12 @@ function resolve_converged_automatic_number_incidents(ownerUserId: string, agent
         string.from(participant.clientName),
         tableCaches
       );
+      let cachedTables = [];
+      if (cache != null) {
+        cachedTables = cache.tables ?? [];
+      }
       const state = scheduler_agent_table_state(
-        cache == null ? [] : cache.tables ?? [],
+        cachedTables,
         table
       );
       const fingerprint = sync_table_reported_fingerprint(state);
