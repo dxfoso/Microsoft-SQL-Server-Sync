@@ -47,6 +47,9 @@ class ControlPlaneContractsTests(unittest.TestCase):
         physical_lookup = source.split(
             "function automatic_number_incident_find_by_physical_key(", 1
         )[1].split("function automatic_number_batch_incident_ids", 1)[0]
+        durable_lookup = source.split(
+            "function automatic_number_incident_find_durable_by_physical_key(", 1
+        )[1].split("function automatic_number_batch_incident_ids", 1)[0]
 
         self.assertIn("string.from(row.physicalKey) != physicalKey", physical_lookup)
         self.assertIn("string.from(row.afterNumber ?? '').trim().length != 0", physical_lookup)
@@ -59,6 +62,17 @@ class ControlPlaneContractsTests(unittest.TestCase):
         )
         self.assertLess(
             upload.index("automatic_number_incident_find_by_physical_key("),
+            upload.index("maximumObserved) + 1"),
+        )
+        self.assertGreaterEqual(durable_lookup.count("db.selectOne(AutoNumberIncident"), 3)
+        self.assertIn("physicalKey", durable_lookup)
+        self.assertNotIn("physicalKey: { in:", durable_lookup)
+        self.assertIn(
+            "existingIncident = automatic_number_incident_find_durable_by_physical_key(",
+            upload,
+        )
+        self.assertLess(
+            upload.index("automatic_number_incident_find_durable_by_physical_key("),
             upload.index("maximumObserved) + 1"),
         )
 

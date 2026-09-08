@@ -6729,6 +6729,40 @@ function automatic_number_incident_find_by_physical_key(rows: array<json>, physi
   return blockedMatch;
 }
 
+function automatic_number_incident_find_durable_by_physical_key(ownerUserId: string, table: string, physicalKey: string): map<json>? {
+  const reserved = db.selectOne(AutoNumberIncident, {
+    ownerUserId,
+    table,
+    physicalKey,
+    status: 'reserved'
+  });
+  if (reserved != null) {
+    return reserved;
+  }
+  const resolved = db.selectOne(AutoNumberIncident, {
+    ownerUserId,
+    table,
+    physicalKey,
+    status: 'resolved'
+  });
+  if (resolved != null &&
+      string.from(resolved.afterNumber ?? '').trim().length != 0) {
+    return resolved;
+  }
+  const blocked = db.selectOne(AutoNumberIncident, {
+    ownerUserId,
+    table,
+    physicalKey,
+    status: 'blocked'
+  });
+  if (blocked != null &&
+      string.from(blocked.afterNumber ?? '').trim().length == 0 &&
+      string.from(blocked.numberColumn).trim().toLowerCase() != 'unconfigured') {
+    return blocked;
+  }
+  return null;
+}
+
 function automatic_number_batch_incident_ids(batchId: string): array<string> {
   if (batchId.trim().length == 0) {
     return [];
@@ -11206,6 +11240,17 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             if (existingIncident == null) {
               existingIncident = automatic_number_incident_find_by_physical_key(
                 currentAutoNumberIncidents.concat(pendingAutoNumberIncidents),
+                physicalKey
+              );
+            }
+            if (existingIncident == null) {
+              // JSON-derived `in` arrays are not a reliable recovery boundary
+              // in the runtime. Resolve the durable reservation by its exact
+              // permanent identity before allocating again or rejecting the
+              // preserved row as stale.
+              existingIncident = automatic_number_incident_find_durable_by_physical_key(
+                winnerOwnerUserId,
+                winnerTable,
                 physicalKey
               );
             }

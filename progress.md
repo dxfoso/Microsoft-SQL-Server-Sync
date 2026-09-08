@@ -2,7 +2,7 @@
 
 ## Second isolated Sales collision verification (2026-09-08)
 
-Overall: **86% complete. INC-585 is implemented and has passed 250 client tests, 602 repository tests, all 36 disposable three-client SQL scenarios, and the 9/9 Standard recovery/concurrency profile with a 26-iteration soak. Windows client `1.0.329+333` is published and its portable HTTPS startup verification passed. The first immutable server build stopped safely at strict TRU validation (INC-596); its strict-mode-safe exact-lookup helper and regressions now pass, and the exact corrected release gates are being rerun. Automatic sync remains paused with zero active jobs. No user action is currently required.**
+Overall: **88% complete. The controlled retry on the INC-585 release exposed INC-613: the server retained the correct 1617/2323 reservations, but a JSON-array batch lookup could omit them and stale-winner ordering then ignored one physical Sale/voucher graph while reporting successful application. The server now recovers every reservation by an exact owner/table/permanent-GUID lookup before allocation or ordering. The focused regressions and all 602 repository tests pass. Automatic sync remains paused while Docker, Standard, immutable deployment, and physical two-client convergence are completed. No user action is currently required.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -10,11 +10,12 @@ Overall: **86% complete. INC-585 is implemented and has passed 250 client tests,
 | Reserve non-colliding document numbers | Done automatically: the server reserved Sales 1617 and voucher 2323 without choosing an authoritative client | 100% |
 | Preserve low-bandwidth evidence | Done: bounded Change Tracking artifacts captured; an unsuitable 140 MB per-client full backup was stopped and safely superseded | 100% |
 | Prevent stale databases contaminating diagnostics | Done: current-database-only, case-insensitive fingerprint selection is deployed and fresh diagnostics cover only `AmnDb048_SyncLab` | 100% |
-| Publish and install the corrected Windows client | Release `1.0.329+333` is published and portable startup verified; live installation follows corrected server deployment | 85% |
-| Prove both Sales exist and all ten mapped tables converge | Failed safely: both server payloads contain both identities, but each SQL copy has only 1,931 `bu000` and 2,272 `ce000` rows with different checksums; repair awaits INC-585 | 25% |
+| Publish and install the corrected Windows client | Done: release `1.0.329+333` is published, portable startup verified, and current on both eligible clients | 100% |
+| Recover durable collision reservations on every retry | Implemented for INC-613 with exact permanent-physical-key lookups; focused and full repository regressions pass | 70% |
+| Prove both Sales exist and all ten mapped tables converge | Pending corrected server deployment and controlled retry; current safe state remains 1,931 `bu000` and 2,272 `ce000` rows per client with different checksums | 25% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 
-Current safety state: this is an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remains disabled and ignored. Global automatic sync is paused, with zero active or failed jobs and no pending decisions. INC-582 is fixed and deployed. INC-585 records that grouped jobs could acknowledge success without canonical post-commit row verification; synchronization will not resume until a corrected client repairs both copies to 1,932 `bu000` rows and 2,273 `ce000` rows and all ten physical fingerprints match.
+Current safety state: this is an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remains disabled and ignored. Global automatic sync is paused. INC-613 is server-side and requires no new Windows client package. Synchronization will not resume until the exact corrected server repairs both copies to 1,932 `bu000` rows and 2,273 `ce000` rows and all ten physical fingerprints match.
 
 ## Automatic Al-Ameen synchronization (2026-09-07)
 
