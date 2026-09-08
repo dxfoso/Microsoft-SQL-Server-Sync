@@ -650,6 +650,9 @@ class SyncContractsTests(unittest.TestCase):
 
     def test_diagnostics_force_fresh_complete_selected_table_fingerprints(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        refresh_body = agent_page.split(
+            "Future<void> _refreshSelectedTableFingerprints", 1
+        )[1].split("Future<void> _startFingerprintAudit", 1)[0]
         diagnostics_body = agent_page.split(
             "Future<String> _buildDiagnosticsPayload({", 1
         )[1].split(
@@ -661,9 +664,26 @@ class SyncContractsTests(unittest.TestCase):
 
         self.assertIn("await _refreshSelectedTableFingerprints();", diagnostics_body)
         self.assertIn(
-            ".where((entry) => _isTableSelectedForSync(entry.value))",
-            diagnostics_body,
+            "_syncKeyMatchesSelectedDatabase(entry.key)", refresh_body
         )
+        self.assertIn(
+            "_syncKeyMatchesSelectedDatabase(entry.key)", diagnostics_body
+        )
+        selected_database_matcher = agent_page.split(
+            "bool _syncKeyMatchesSelectedDatabase", 1
+        )[1].split("bool _syncKeyMatchesDatabase", 1)[0]
+        self.assertIn("syncTableKey.toLowerCase().startsWith(", selected_database_matcher)
+        self.assertIn("databaseName.toLowerCase()", selected_database_matcher)
+        database_matcher = agent_page.split(
+            "bool _syncKeyMatchesDatabase", 1
+        )[1].split("List<String> _stableVisibleTablesForDatabase", 1)[0]
+        self.assertIn("syncTableKey.toLowerCase().startsWith(", database_matcher)
+        self.assertIn("databaseName.toLowerCase()", database_matcher)
+        database_matcher = agent_page.split(
+            "bool _syncKeyMatchesDatabase", 1
+        )[1].split("Future<void> _loadProfile", 1)[0]
+        self.assertIn("syncTableKey.toLowerCase().startsWith(", database_matcher)
+        self.assertIn("_isTableSelectedForSync(entry.value)", diagnostics_body)
         self.assertIn(
             "'selectedTableFingerprints': selectedTableFingerprints",
             diagnostics_body,

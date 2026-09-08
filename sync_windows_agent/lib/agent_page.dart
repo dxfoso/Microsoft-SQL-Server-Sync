@@ -542,7 +542,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       return qualifiedName.database.toLowerCase() == databaseName.toLowerCase();
     }
-    return syncTableKey.startsWith('$databaseName$_syncTableKeySeparator');
+    return syncTableKey.toLowerCase().startsWith(
+      '${databaseName.toLowerCase()}$_syncTableKeySeparator',
+    );
   }
 
   bool _syncKeyMatchesDatabase(String syncTableKey, String database) {
@@ -557,7 +559,9 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       }
       return qualifiedName.database.toLowerCase() == databaseName.toLowerCase();
     }
-    return syncTableKey.startsWith('$databaseName$_syncTableKeySeparator');
+    return syncTableKey.toLowerCase().startsWith(
+      '${databaseName.toLowerCase()}$_syncTableKeySeparator',
+    );
   }
 
   List<String> _stableVisibleTablesForDatabase(
@@ -3508,7 +3512,8 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
   Future<void> _refreshSelectedTableFingerprints({bool bounded = false}) async {
     final targets = <MapEntry<String, String>>[];
     for (final entry in _syncState.tables.entries) {
-      if (!_isTableSelectedForSync(entry.value)) {
+      if (!_syncKeyMatchesSelectedDatabase(entry.key) ||
+          !_isTableSelectedForSync(entry.value)) {
         continue;
       }
       final database = _databaseNameFromSyncKey(entry.key).trim();
@@ -6864,7 +6869,11 @@ ORDER BY s.name, t.name;
         )
         .toList(growable: false);
     final selectedTableFingerprints = _syncState.tables.entries
-        .where((entry) => _isTableSelectedForSync(entry.value))
+        .where(
+          (entry) =>
+              _syncKeyMatchesSelectedDatabase(entry.key) &&
+              _isTableSelectedForSync(entry.value),
+        )
         .map(
           (entry) => {
             'table': entry.key,

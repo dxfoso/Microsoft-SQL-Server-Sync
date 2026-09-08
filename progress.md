@@ -1,5 +1,21 @@
 # Progress
 
+## Second isolated Sales collision verification (2026-09-08)
+
+Overall: **70% complete. Both independently created Sales were captured and their number collision was automatically reserved, but final physical convergence is not yet certified. Automatic sync is paused with zero active jobs while client `1.0.328+332` is verified, published, and installed. No user action is currently required.**
+
+| Step | Status | Progress |
+|---|---|---:|
+| Detect the independent Sales and prove the collision | Done: both clients created `bu000` number 1616 and `ce000` number 2322 with different permanent GUID graphs | 100% |
+| Reserve non-colliding document numbers | Done automatically: the server reserved Sales 1617 and voucher 2323 without choosing an authoritative client | 100% |
+| Preserve low-bandwidth evidence | Done: bounded Change Tracking artifacts captured; an unsuitable 140 MB per-client full backup was stopped and safely superseded | 100% |
+| Prevent stale databases contaminating diagnostics | Implemented with current-database-only, case-insensitive fingerprint selection; focused regressions pass | 80% |
+| Publish and install the corrected Windows client | In progress for `1.0.328+332` | 20% |
+| Prove both Sales exist and all ten mapped tables converge | Pending fresh physical fingerprints from both corrected clients | 0% |
+| Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
+
+Current safety state: this is an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remains disabled and ignored. The live server gate is ready, with zero active or failed jobs and no pending decisions. INC-582 caused diagnostics to scan retained policies from the old `AmnDb048` database. The fix and regression are in progress; synchronization will not be resumed until the corrected clients report current-database-only physical fingerprints.
+
 ## Automatic Al-Ameen synchronization (2026-09-07)
 
 Overall: **100% complete for implementation, automated verification, production deployment, and the controlled automatic `_SyncLab` run of the mapped Al-Ameen Sales, Purchase, voucher, ledger, stock, account, material, and barcode scope. INC-575 prevents retained policies for another database from entering the current database's atomic graph. Exact product commit `81a6c70edf54c57c390026962f10548ee76a5204` passed strict TRU validation, the disposable 36-scenario Docker gate, and all 9 Standard transaction/recovery stages; both immutable deployments are ready with zero compile errors. After deployment, the previously stalled durable Sync All operation resumed without another click, completed all ten tables, and left zero active jobs, failures, decisions, or gate issues. Both eligible clients remain current on `1.0.327+331`; `velvet home` remains disabled and ignored. General arbitrary-table synchronization remains outside the proven scope.**

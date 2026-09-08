@@ -4313,6 +4313,38 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(stderr.getvalue().strip(), "full system boom")
 
+    def test_live_sync_summary_is_namespace_scoped_read_only_and_secret_safe(self):
+        source = (ROOT / "scripts" / "get_live_sync_summary.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("kubectl get secret $SecretName -n $Namespace -o json", source)
+        self.assertIn("Invoke-ControlPlaneFunction -Name 'live_state'", source)
+        self.assertIn("automaticSyncPaused = $state.automaticSyncPaused", source)
+        self.assertIn("allConverged =", source)
+        self.assertIn("$tableParts[0] -ieq $agentDatabase", source)
+        self.assertIn("$tableParts[-1] -ieq $tableName", source)
+        self.assertNotIn("Write-Host $adminPassword", source)
+        self.assertNotIn("Write-Output $token", source)
+        self.assertNotIn("automatic_sync_control_set", source)
+        self.assertNotIn("jobs_create", source)
+
+    def test_sync_lab_collision_evidence_defaults_to_bounded_delta(self):
+        source = (
+            ROOT / "scripts" / "collect_live_sync_lab_collision_evidence.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("[long]$BaselineVersion = 4525", source)
+        self.assertIn("[string]$Database = 'AmnDb048_SyncLab'", source)
+        self.assertIn("[ValidateSet('full_backup', 'change_tracking_delta')]", source)
+        self.assertIn("[string]$Mode = 'change_tracking_delta'", source)
+        self.assertIn("kubectl get secret sync-auto-scheduler -n $namespace -o json", source)
+        self.assertIn("kubectl get secret sql-sync-private-export -n $namespace -o json", source)
+        self.assertIn("Mode = $Mode", source)
+        self.assertIn("if ($Mode -eq 'change_tracking_delta')", source)
+        self.assertNotIn("Write-Host $adminPassword", source)
+        self.assertNotIn("Write-Host $uploadToken", source)
+
 
 if __name__ == "__main__":
     unittest.main()
