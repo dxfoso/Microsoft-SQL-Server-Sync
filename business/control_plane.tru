@@ -11474,16 +11474,16 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
           multiClientUnionBootstrap &&
           operation != 'D' &&
           durableTombstoneWinner != null;
-        // A full-union retry receives a new Change Tracking version even when
-        // the SQL row is byte-for-byte identical to the durable winner. Relay
-        // that row so a failed canonical download can be rebuilt completely,
-        // but keep the original winner metadata. Differing stale rows and
-        // rows hidden by a durable delete still follow the normal winner rule.
+        // A full-union retry can preserve the original deterministic operation
+        // id or receive a new Change Tracking version while the SQL row stays
+        // byte-for-byte identical to the durable winner. Relay it in either
+        // case so a failed canonical download can be rebuilt completely, but
+        // keep the original ordering metadata. Differing stale rows and rows
+        // hidden by a durable delete still follow the normal winner rule.
         const incomingRowHash = string.from(incomingRow.__sync_row_hash ?? '').trim();
         matchesDurableWinnerContent =
           multiClientUnionBootstrap &&
           currentWinner != null &&
-          string.from(currentWinner.operationId) != operationId &&
           incomingRowHash.length != 0 &&
           incomingRowHash == string.from(currentWinner.rowHash).trim() &&
           operation != 'D' &&

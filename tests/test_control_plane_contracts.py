@@ -3109,6 +3109,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("let matchesDurableWinnerContent = false", upload_body)
         self.assertNotIn("const matchesDurableWinnerContent =", upload_body)
         self.assertIn("incomingRowHash == string.from(currentWinner.rowHash).trim()", upload_body)
+        durable_match = upload_body.split("matchesDurableWinnerContent =", 1)[1].split(
+            "reconstructsDurableWinnerContent =", 1
+        )[0]
+        self.assertNotIn("currentWinner.operationId", durable_match)
         self.assertIn("operation != 'D'", upload_body)
         self.assertIn(
             "string.from(currentWinner.operation).trim().toUpperCase() != 'D'",
