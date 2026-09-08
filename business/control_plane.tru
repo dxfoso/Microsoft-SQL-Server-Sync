@@ -7614,6 +7614,14 @@ function create_multi_writer_batch(ownerUserId: string, table: string, agents: a
   ));
 }
 
+function sync_row_winner_find_durable(ownerUserId: string, table: string, operationId: string): map<json>? {
+  return db.selectOne(SyncRowWinner, {
+    ownerUserId,
+    table,
+    operationId
+  });
+}
+
 // A comparison batch is deliberately upload-only. Clients capture complete,
 // primary-key ordered snapshots for inspection, but no download/apply job is
 // created and no Change Tracking cursor is advanced. This makes the operation
@@ -11891,11 +11899,11 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
       if (durableOperationId.length == 0) {
         continue;
       }
-      const durableWinner = db.selectOne(SyncRowWinner, {
-        ownerUserId: string.from(batch.ownerUserId ?? '').trim(),
-        table: string.from(batch.table),
-        operationId: durableOperationId
-      });
+      const durableWinner = sync_row_winner_find_durable(
+        string.from(batch.ownerUserId ?? '').trim(),
+        string.from(batch.table),
+        durableOperationId
+      );
       if (durableWinner != null) {
         durableWinners = durableWinners.concat([durableWinner]);
       }

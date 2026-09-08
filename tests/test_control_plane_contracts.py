@@ -2881,8 +2881,12 @@ class ControlPlaneContractsTests(unittest.TestCase):
             "for (const durableOperationIdValue of candidateDurableOperationIds)",
             download_body,
         )
-        self.assertIn("const durableWinner = db.selectOne(SyncRowWinner", download_body)
-        self.assertIn("operationId: durableOperationId", download_body)
+        self.assertIn("sync_row_winner_find_durable(", source)
+        self.assertIn("const durableWinner = sync_row_winner_find_durable(", download_body)
+        marker_loop = download_body.split(
+            "for (const durableOperationIdValue of candidateDurableOperationIds)", 1
+        )[1].split("let durableWinnerOperationIds", 1)[0]
+        self.assertNotIn("db.selectOne(", marker_loop)
         self.assertIn(
             "string_array_contains(durableWinnerOperationIds, durableOperationId)",
             download_body,

@@ -2,7 +2,7 @@
 
 ## Second isolated Sales collision verification (2026-09-08)
 
-Overall: **85% complete. INC-585 is implemented and has passed 250 client tests, 602 repository tests, all 36 disposable three-client SQL scenarios, and the 9/9 Standard recovery/concurrency profile with a 26-iteration soak. Automatic sync remains paused with zero active jobs while immutable server/client release `1.0.329+333` is published, deployed, and used to repair the two SyncLab copies. No user action is currently required.**
+Overall: **86% complete. INC-585 is implemented and has passed 250 client tests, 602 repository tests, all 36 disposable three-client SQL scenarios, and the 9/9 Standard recovery/concurrency profile with a 26-iteration soak. Windows client `1.0.329+333` is published and its portable HTTPS startup verification passed. The first immutable server build stopped safely at strict TRU validation (INC-596); its strict-mode-safe exact-lookup helper and regressions now pass, and the exact corrected release gates are being rerun. Automatic sync remains paused with zero active jobs. No user action is currently required.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -10,7 +10,7 @@ Overall: **85% complete. INC-585 is implemented and has passed 250 client tests,
 | Reserve non-colliding document numbers | Done automatically: the server reserved Sales 1617 and voucher 2323 without choosing an authoritative client | 100% |
 | Preserve low-bandwidth evidence | Done: bounded Change Tracking artifacts captured; an unsuitable 140 MB per-client full backup was stopped and safely superseded | 100% |
 | Prevent stale databases contaminating diagnostics | Done: current-database-only, case-insensitive fingerprint selection is deployed and fresh diagnostics cover only `AmnDb048_SyncLab` | 100% |
-| Publish and install the corrected Windows client | Release `1.0.329+333` passed all local gates; immutable publication and installation are in progress | 80% |
+| Publish and install the corrected Windows client | Release `1.0.329+333` is published and portable startup verified; live installation follows corrected server deployment | 85% |
 | Prove both Sales exist and all ten mapped tables converge | Failed safely: both server payloads contain both identities, but each SQL copy has only 1,931 `bu000` and 2,272 `ce000` rows with different checksums; repair awaits INC-585 | 25% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 

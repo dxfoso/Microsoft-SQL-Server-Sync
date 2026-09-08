@@ -2662,8 +2662,16 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
 
         self.assertIn("for (const durableOperationIdValue of candidateDurableOperationIds)", download)
-        self.assertIn("const durableWinner = db.selectOne(SyncRowWinner", download)
-        self.assertIn("operationId: durableOperationId", download)
+        helper = control_plane.split("function sync_row_winner_find_durable(", 1)[1].split(
+            "function sync_row_winner_find_by_physical_key(", 1
+        )[0]
+        self.assertIn("db.selectOne(SyncRowWinner", helper)
+        self.assertIn("operationId", helper)
+        self.assertIn("const durableWinner = sync_row_winner_find_durable(", download)
+        marker_loop = download.split(
+            "for (const durableOperationIdValue of candidateDurableOperationIds)", 1
+        )[1].split("let durableWinnerOperationIds", 1)[0]
+        self.assertNotIn("db.selectOne(", marker_loop)
         self.assertNotIn("operationId: { in: candidateDurableOperationIds }", download)
 
     def test_root_backend_validation_uses_the_locked_runtime_rust_version(self):
