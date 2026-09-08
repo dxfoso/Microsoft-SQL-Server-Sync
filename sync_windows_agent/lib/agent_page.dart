@@ -8745,8 +8745,63 @@ ORDER BY s.name, t.name;
     }
 
     // SQL is committed at this point. Remove resumable stages before the
-    // network acknowledgement; a lost response safely rebuilds and reapplies
-    // the idempotent group from the server's immutable snapshots.
+    // network acknowledgement only after proving that every canonical row is
+    // physically present. The grouped path must not bypass the ordinary
+    // complete-snapshot verification performed by the single-table path.
+    for (final entry in ordered) {
+      final database = _databaseNameFromSyncKey(entry.job.table).trim();
+      final targetTable = _splitQualifiedName(_localTableName(entry.job.table));
+      final syncColumns = entry.merge.verificationColumns;
+      final primaryKeyColumns = entry.merge.primaryKeyColumns;
+      if (syncColumns.isEmpty || primaryKeyColumns.isEmpty) {
+        throw StateError(
+          'Atomic Al-Ameen operation group verification cannot inspect ${entry.job.table}. The committed group remains unacknowledged and will retry automatically.',
+        );
+      }
+      final unappliedRows = await _rowsWhoseContentChanged(
+        operationId: '${entry.job.id}_post_commit',
+        profile: _activeProfile(),
+        database: database,
+        schema: targetTable.schema,
+        table: targetTable.table,
+        columns: syncColumns,
+        primaryKeyColumns: primaryKeyColumns,
+        rows: entry.merge.verificationRows
+            .where((row) => row['__sync_op'] != 'D')
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(growable: false),
+      );
+      if (unappliedRows.isNotEmpty) {
+        throw StateError(
+          'Atomic Al-Ameen operation group verification failed for ${entry.job.table}: ${unappliedRows.length} canonical upsert row(s) are absent or different after commit. The group remains unacknowledged and will retry automatically.',
+        );
+      }
+      final deleteRows = entry.merge.verificationRows
+          .where((row) => row['__sync_op'] == 'D')
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+      if (deleteRows.isNotEmpty) {
+        final remainingDeletedRows = await _fetchRowsByPrimaryKeys(
+          operationId: '${entry.job.id}_post_delete',
+          profile: _activeProfile(),
+          database: database,
+          schema: targetTable.schema,
+          table: targetTable.table,
+          columns: syncColumns,
+          primaryKeyColumns: primaryKeyColumns,
+          keyRows: deleteRows,
+          onStageProgress: null,
+        );
+        if (remainingDeletedRows.isNotEmpty) {
+          throw StateError(
+            'Atomic Al-Ameen operation group verification failed for ${entry.job.table}: ${remainingDeletedRows.length} explicit tombstone row(s) remain after commit. The group remains unacknowledged and will retry automatically.',
+          );
+        }
+      }
+    }
+
+    // A lost response now safely rebuilds, reapplies, and re-verifies the
+    // idempotent group from the server's immutable snapshots.
     _deferredOperationGroups.remove(operationGroupId);
     _operationGroupSnapshotVersions.remove(operationGroupId);
     for (final entry in ordered) {
@@ -9606,7 +9661,13 @@ ORDER BY s.name, t.name;
         onMergeStarted: reportMergeStarted,
       );
       if (applyResult.mergeDeferred) {
-        onMergeDeferred?.call(applyResult);
+        onMergeDeferred?.call(
+          applyResult.withVerification(
+            columns: syncColumns,
+            primaryKeyColumns: primaryKeyColumns,
+            rows: rowsForApply,
+          ),
+        );
         return -1;
       }
       final rowCountAfter = await _queryTableRowCount(
@@ -9699,7 +9760,13 @@ ORDER BY s.name, t.name;
         onMergeStarted: reportMergeStarted,
       );
       if (applyResult.mergeDeferred) {
-        onMergeDeferred?.call(applyResult);
+        onMergeDeferred?.call(
+          applyResult.withVerification(
+            columns: syncColumns,
+            primaryKeyColumns: primaryKeyColumns,
+            rows: rowsForApply,
+          ),
+        );
         return -1;
       }
       final rowCountAfter = await _queryTableRowCount(
@@ -15623,6 +15690,9 @@ class _TargetApplyResult {
     this.deferredMergeSql = '',
     this.stageTableName = '',
     this.rowCountBefore = 0,
+    this.verificationColumns = const <_SqlColumnDefinition>[],
+    this.primaryKeyColumns = const <String>[],
+    this.verificationRows = const <Map<String, dynamic>>[],
   });
 
   final int insertedRows;
@@ -15633,6 +15703,29 @@ class _TargetApplyResult {
   final String deferredMergeSql;
   final String stageTableName;
   final int rowCountBefore;
+  final List<_SqlColumnDefinition> verificationColumns;
+  final List<String> primaryKeyColumns;
+  final List<Map<String, dynamic>> verificationRows;
+
+  _TargetApplyResult withVerification({
+    required List<_SqlColumnDefinition> columns,
+    required List<String> primaryKeyColumns,
+    required List<Map<String, dynamic>> rows,
+  }) => _TargetApplyResult(
+    insertedRows: insertedRows,
+    protectedRows: protectedRows,
+    protectedUpsertRows: protectedUpsertRows,
+    protectedDeleteRows: protectedDeleteRows,
+    mergeDeferred: mergeDeferred,
+    deferredMergeSql: deferredMergeSql,
+    stageTableName: stageTableName,
+    rowCountBefore: rowCountBefore,
+    verificationColumns: List<_SqlColumnDefinition>.unmodifiable(columns),
+    primaryKeyColumns: List<String>.unmodifiable(primaryKeyColumns),
+    verificationRows: List<Map<String, dynamic>>.unmodifiable(
+      rows.map((row) => Map<String, dynamic>.unmodifiable(row)),
+    ),
+  );
 }
 
 class _DeferredOperationGroupTable {

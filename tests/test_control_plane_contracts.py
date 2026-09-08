@@ -2875,9 +2875,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("clients report different SQL unique-key definitions", upload_body)
         self.assertIn("acceptedOperationIds", download_body)
         self.assertIn("winnerPolicyApplied", download_body)
-        self.assertIn("const durableWinners = db.selectMany(SyncRowWinner", download_body)
+        self.assertIn("let durableWinners = []", download_body)
         self.assertIn("candidateDurableOperationIds", download_body)
-        self.assertIn("operationId: { in: candidateDurableOperationIds }", download_body)
+        self.assertIn(
+            "for (const durableOperationIdValue of candidateDurableOperationIds)",
+            download_body,
+        )
+        self.assertIn("const durableWinner = db.selectOne(SyncRowWinner", download_body)
+        self.assertIn("operationId: durableOperationId", download_body)
         self.assertIn(
             "string_array_contains(durableWinnerOperationIds, durableOperationId)",
             download_body,

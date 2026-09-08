@@ -92,6 +92,10 @@ $agentSummary = @($agents | ForEach-Object {
     diagnosticStatus = $_.diagnostics.status
     diagnosticStage = $_.diagnostics.stage
     diagnosticProgressPercent = $_.diagnostics.progressPercent
+    fingerprintAuditStatus = $_.fingerprintAudit.status
+    fingerprintAuditCheckedTables = $_.fingerprintAudit.checkedTables
+    fingerprintAuditTotalTables = $_.fingerprintAudit.totalTables
+    fingerprintAuditCurrentTables = @($_.fingerprintAudit.currentTables)
   }
 })
 

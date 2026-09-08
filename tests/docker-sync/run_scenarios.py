@@ -185,6 +185,19 @@ def run(command, *, input_text=None, cwd=ROOT, check=True):
     return result
 
 
+def run_dart_harness(request_path):
+    command = [DART, "run", "tool/sync_sql_harness.dart", str(request_path)]
+    result = run(command, cwd=AGENT_DIR, check=False)
+    if result.returncode and not result.stdout.strip() and not result.stderr.strip():
+        result = run(command, cwd=AGENT_DIR, check=False)
+    if result.returncode:
+        raise RuntimeError(
+            f"Command failed ({result.returncode}): {' '.join(map(str, command))}\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
+    return result
+
+
 def sqlcmd_command(arguments):
     if not CONTAINER_SQLCMD:
         return [SQLCMD, *arguments]
@@ -570,10 +583,7 @@ def wrap_atomic_group(table_apply_sql):
         json.dump(request, handle, ensure_ascii=False)
         request_path = Path(handle.name)
     try:
-        result = run(
-            [DART, "run", "tool/sync_sql_harness.dart", str(request_path)],
-            cwd=AGENT_DIR,
-        )
+        result = run_dart_harness(request_path)
         return result.stdout
     finally:
         request_path.unlink(missing_ok=True)
@@ -643,7 +653,20 @@ def execute_generated_sql(generated, *, check=True):
         handle.write(generated)
         sql_path = Path(handle.name)
     try:
-        return run(generated_sql_command(sql_path), check=check)
+        command = generated_sql_command(sql_path)
+        result = run(command, check=False)
+        if (
+            result.returncode
+            and result.stdout.strip() == "EOF"
+            and result.stderr.strip() == "EOF"
+        ):
+            result = run(command, check=False)
+        if check and result.returncode:
+            raise RuntimeError(
+                f"Command failed ({result.returncode}): {' '.join(map(str, command))}\n"
+                f"{result.stdout}\n{result.stderr}"
+            )
+        return result
     finally:
         sql_path.unlink(missing_ok=True)
 

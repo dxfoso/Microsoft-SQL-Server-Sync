@@ -58,6 +58,11 @@ class DockerSyncHarnessContracts(unittest.TestCase):
         self.assertIn("assert_unicode_hex_transport", runner)
         self.assertIn('decode("utf-16-le")', runner)
         self.assertIn("0x53514C53594E43", runner)
+        self.assertIn("def run_dart_harness(request_path):", runner)
+        self.assertIn("not result.stdout.strip() and not result.stderr.strip()", runner)
+        self.assertIn("result = run_dart_harness(request_path)", runner)
+        self.assertIn('result.stdout.strip() == "EOF"', runner)
+        self.assertIn('result.stderr.strip() == "EOF"', runner)
 
     def test_production_backup_is_copy_only_and_ignored_by_git(self):
         exporter = (ROOT / "scripts/export_sync_test_database.ps1").read_text(encoding="utf-8")

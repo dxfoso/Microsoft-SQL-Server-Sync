@@ -2637,6 +2637,35 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("__SQL_SYNC_GROUP_COMMITTED__=1", merge)
         self.assertIn("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION", merge)
 
+    def test_grouped_alameen_apply_verifies_canonical_rows_before_acknowledgement(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        commit = agent.split("Future<void> _commitDeferredOperationGroup(", 1)[1].split(
+            "String _syncRejectionSummary", 1
+        )[0]
+
+        self.assertIn("final unappliedRows = await _rowsWhoseContentChanged", commit)
+        self.assertIn("remainingDeletedRows = await _fetchRowsByPrimaryKeys", commit)
+        self.assertIn("entry.merge.verificationRows", commit)
+        self.assertIn("canonical upsert row(s) are absent or different", commit)
+        self.assertIn("explicit tombstone row(s) remain", commit)
+        self.assertGreaterEqual(agent.count("rows: rowsForApply"), 2)
+        self.assertIn("_TargetApplyResult withVerification", agent)
+        self.assertLess(
+            commit.index("final unappliedRows = await _rowsWhoseContentChanged"),
+            commit.index("await _controlPlaneClient.completeJob("),
+        )
+
+    def test_multi_writer_download_resolves_each_durable_marker_exactly(self):
+        control_plane = read_text("business/control_plane.tru")
+        download = control_plane.split("function jobs_multi_writer_download(", 1)[1].split(
+            "function jobs_complete(", 1
+        )[0]
+
+        self.assertIn("for (const durableOperationIdValue of candidateDurableOperationIds)", download)
+        self.assertIn("const durableWinner = db.selectOne(SyncRowWinner", download)
+        self.assertIn("operationId: durableOperationId", download)
+        self.assertNotIn("operationId: { in: candidateDurableOperationIds }", download)
+
     def test_root_backend_validation_uses_the_locked_runtime_rust_version(self):
         dockerfile = read_text("Dockerfile.backend")
         backend_dockerfile = read_text("backend/Dockerfile")

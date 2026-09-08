@@ -4324,6 +4324,8 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         self.assertIn("allConverged =", source)
         self.assertIn("$tableParts[0] -ieq $agentDatabase", source)
         self.assertIn("$tableParts[-1] -ieq $tableName", source)
+        self.assertIn("fingerprintAuditTotalTables = $_.fingerprintAudit.totalTables", source)
+        self.assertIn("fingerprintAuditCurrentTables = @($_.fingerprintAudit.currentTables)", source)
         self.assertNotIn("Write-Host $adminPassword", source)
         self.assertNotIn("Write-Output $token", source)
         self.assertNotIn("automatic_sync_control_set", source)

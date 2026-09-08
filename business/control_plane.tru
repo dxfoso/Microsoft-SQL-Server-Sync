@@ -11879,16 +11879,27 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   let acceptedOperationIds = candidateAcceptedOperationIds;
   let acceptedOperations = candidateAcceptedOperations;
   if (winnerPolicyApplied && candidateAcceptedOperationIds.length > 0) {
-    const durableWinners = db.selectMany(SyncRowWinner, {
-      where: {
+    // Resolve every retained marker independently. The runtime's bounded
+    // `in` query can return an empty set for a JSON-derived string array even
+    // when each operation is present in the durable register. Treating that
+    // as ordinary pruning produces a successful empty download. A page is
+    // already bounded by the upload chunk limit, so exact lookups are bounded
+    // and preserve the fail-closed winner check.
+    let durableWinners = [];
+    for (const durableOperationIdValue of candidateDurableOperationIds) {
+      const durableOperationId = string.from(durableOperationIdValue).trim();
+      if (durableOperationId.length == 0) {
+        continue;
+      }
+      const durableWinner = db.selectOne(SyncRowWinner, {
         ownerUserId: string.from(batch.ownerUserId ?? '').trim(),
         table: string.from(batch.table),
-        operationId: { in: candidateDurableOperationIds }
-      },
-      orderBy: { field: 'id', dir: 'asc' },
-      fields: ['operationId', 'modifiedAtUtc', 'operation'],
-      limit: 500
-    });
+        operationId: durableOperationId
+      });
+      if (durableWinner != null) {
+        durableWinners = durableWinners.concat([durableWinner]);
+      }
+    }
     let durableWinnerOperationIds = [];
     for (const durableWinner of durableWinners) {
       const operationId = string.from(durableWinner.operationId).trim();

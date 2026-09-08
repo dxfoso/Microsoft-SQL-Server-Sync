@@ -2,19 +2,19 @@
 
 ## Second isolated Sales collision verification (2026-09-08)
 
-Overall: **70% complete. Both independently created Sales were captured and their number collision was automatically reserved, but final physical convergence is not yet certified. Automatic sync is paused with zero active jobs while client `1.0.328+332` is verified, published, and installed. No user action is currently required.**
+Overall: **85% complete. INC-585 is implemented and has passed 250 client tests, 602 repository tests, all 36 disposable three-client SQL scenarios, and the 9/9 Standard recovery/concurrency profile with a 26-iteration soak. Automatic sync remains paused with zero active jobs while immutable server/client release `1.0.329+333` is published, deployed, and used to repair the two SyncLab copies. No user action is currently required.**
 
 | Step | Status | Progress |
 |---|---|---:|
 | Detect the independent Sales and prove the collision | Done: both clients created `bu000` number 1616 and `ce000` number 2322 with different permanent GUID graphs | 100% |
 | Reserve non-colliding document numbers | Done automatically: the server reserved Sales 1617 and voucher 2323 without choosing an authoritative client | 100% |
 | Preserve low-bandwidth evidence | Done: bounded Change Tracking artifacts captured; an unsuitable 140 MB per-client full backup was stopped and safely superseded | 100% |
-| Prevent stale databases contaminating diagnostics | Implemented with current-database-only, case-insensitive fingerprint selection; focused regressions pass | 80% |
-| Publish and install the corrected Windows client | In progress for `1.0.328+332` | 20% |
-| Prove both Sales exist and all ten mapped tables converge | Pending fresh physical fingerprints from both corrected clients | 0% |
+| Prevent stale databases contaminating diagnostics | Done: current-database-only, case-insensitive fingerprint selection is deployed and fresh diagnostics cover only `AmnDb048_SyncLab` | 100% |
+| Publish and install the corrected Windows client | Release `1.0.329+333` passed all local gates; immutable publication and installation are in progress | 80% |
+| Prove both Sales exist and all ten mapped tables converge | Failed safely: both server payloads contain both identities, but each SQL copy has only 1,931 `bu000` and 2,272 `ce000` rows with different checksums; repair awaits INC-585 | 25% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 
-Current safety state: this is an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remains disabled and ignored. The live server gate is ready, with zero active or failed jobs and no pending decisions. INC-582 caused diagnostics to scan retained policies from the old `AmnDb048` database. The fix and regression are in progress; synchronization will not be resumed until the corrected clients report current-database-only physical fingerprints.
+Current safety state: this is an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remains disabled and ignored. Global automatic sync is paused, with zero active or failed jobs and no pending decisions. INC-582 is fixed and deployed. INC-585 records that grouped jobs could acknowledge success without canonical post-commit row verification; synchronization will not resume until a corrected client repairs both copies to 1,932 `bu000` rows and 2,273 `ce000` rows and all ten physical fingerprints match.
 
 ## Automatic Al-Ameen synchronization (2026-09-07)
 
