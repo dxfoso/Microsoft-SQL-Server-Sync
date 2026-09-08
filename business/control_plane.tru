@@ -7656,6 +7656,14 @@ function sync_row_winner_find_durable(ownerUserId: string, table: string, operat
   });
 }
 
+function sync_row_winner_find_durable_by_id(ownerUserId: string, table: string, id: string): map<json>? {
+  return db.selectOne(SyncRowWinner, {
+    ownerUserId,
+    table,
+    id
+  });
+}
+
 // A comparison batch is deliberately upload-only. Clients capture complete,
 // primary-key ordered snapshots for inspection, but no download/apply job is
 // created and no Change Tracking cursor is advanced. This makes the operation
@@ -11101,6 +11109,16 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         if (currentWinner == null) {
           currentWinner = sync_row_winner_find_by_id(currentWinners, winnerId);
         }
+        if (currentWinner == null) {
+          currentWinner = sync_row_winner_find_durable_by_id(
+            winnerOwnerUserId,
+            winnerTable,
+            winnerId
+          );
+          if (currentWinner != null) {
+            currentWinners = currentWinners.concat([currentWinner]);
+          }
+        }
         let logicalWinnerRefs = [];
         if (operation == 'D' && currentWinner != null) {
           for (const logicalWinnerId of currentWinner.logicalWinnerIds ?? []) {
@@ -11128,6 +11146,23 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
             incomingRow,
             winnerLogicalKeyColumnSets
           );
+        }
+        // The runtime can omit individual members of a JSON-derived `in`
+        // query. Exact-register recovery is therefore required for every
+        // physical and logical candidate before conflict/order decisions.
+        for (const logicalWinnerRef of logicalWinnerRefs) {
+          const logicalWinnerId = string.from(logicalWinnerRef.id);
+          if (sync_row_winner_find_by_id(pendingWinners, logicalWinnerId) == null &&
+              sync_row_winner_find_by_id(currentWinners, logicalWinnerId) == null) {
+            const durableLogicalWinner = sync_row_winner_find_durable_by_id(
+              winnerOwnerUserId,
+              winnerTable,
+              logicalWinnerId
+            );
+            if (durableLogicalWinner != null) {
+              currentWinners = currentWinners.concat([durableLogicalWinner]);
+            }
+          }
         }
         if (operation != 'D' && autoNumberRule != null) {
           const numberColumn = string.from(autoNumberRule.numberColumn);

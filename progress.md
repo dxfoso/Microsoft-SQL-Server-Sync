@@ -2,7 +2,7 @@
 
 ## Second isolated Sales collision verification (2026-09-08)
 
-Overall: **88% complete. The controlled retry on the INC-585 release exposed INC-613: the server retained the correct 1617/2323 reservations, but a JSON-array batch lookup could omit them and stale-winner ordering then ignored one physical Sale/voucher graph while reporting successful application. The server now recovers every reservation by an exact owner/table/permanent-GUID lookup before allocation or ordering. The focused regressions and all 602 repository tests pass. Automatic sync remains paused while Docker, Standard, immutable deployment, and physical two-client convergence are completed. No user action is currently required.**
+Overall: **90% complete. Commit `3f64f4d` passed all 602 repository tests, all 36 disposable SQL scenarios, Standard 9/9, immutable build/deployment, and two public health checks. Its controlled 36-job retry exposed INC-619: upload still used JSON-array preloads for winner registers, so both clients ignored one Sales/voucher row even after recovering the correct reservation. Exact per-candidate physical/logical winner recovery is now implemented and focused regressions pass. Automatic sync remains paused while the corrected release gates and physical convergence run again. No user action is currently required.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -12,6 +12,7 @@ Overall: **88% complete. The controlled retry on the INC-585 release exposed INC
 | Prevent stale databases contaminating diagnostics | Done: current-database-only, case-insensitive fingerprint selection is deployed and fresh diagnostics cover only `AmnDb048_SyncLab` | 100% |
 | Publish and install the corrected Windows client | Done: release `1.0.329+333` is published, portable startup verified, and current on both eligible clients | 100% |
 | Recover durable collision reservations on every retry | Implemented for INC-613 with exact permanent-physical-key lookups; focused and full repository regressions pass | 70% |
+| Recover durable winner registers on every upload | INC-619 exact physical/logical ID fallbacks implemented; focused regressions pass | 35% |
 | Prove both Sales exist and all ten mapped tables converge | Pending corrected server deployment and controlled retry; current safe state remains 1,931 `bu000` and 2,272 `ce000` rows per client with different checksums | 25% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 
