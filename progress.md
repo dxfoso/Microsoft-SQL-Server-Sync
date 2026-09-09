@@ -1,8 +1,8 @@
 # Progress
 
-## Second isolated Sales collision verification (2026-09-08)
+## Second isolated Sales collision verification (2026-09-09)
 
-Overall: **92% complete. Exact release `1a778b0` passed 603 repository tests, all 36 disposable SQL scenarios, Standard 9/9, deployment, and public health. Both clients then uploaded all Sales/voucher rows and the correct 1617/2323 directives, but INC-627 proved download pruning used a non-unique operation ID and returned zero canonical rows. Accepted markers now carry and resolve the exact durable physical winner-register ID, with a legacy fallback for old jobs. Automatic sync remains paused while this final transport fix is gated, deployed, and physically verified. No user action is currently required.**
+Overall: **96% complete. Root cause INC-686 is fixed: job delivery omitted the stored nine-table operation-group manifest, so clients acknowledged only `ac000` and the server closed the remaining downloads. Commit `4e14c619f491048d18173c3d23c745780e80d33c` preserves the manifest end-to-end, requires an exact fail-closed acknowledgement, scopes completion to one subscriber, and records per-table results. All 604 Python tests, 253 Flutter tests, 36 disposable SQL scenarios, and the 9/9 Standard transaction/recovery gate pass. Publication, deployment, client update, and final physical `_SyncLab` convergence remain; no user action is currently required.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -11,14 +11,15 @@ Overall: **92% complete. Exact release `1a778b0` passed 603 repository tests, al
 | Preserve low-bandwidth evidence | Done: bounded Change Tracking artifacts captured; an unsuitable 140 MB per-client full backup was stopped and safely superseded | 100% |
 | Prevent stale databases contaminating diagnostics | Done: current-database-only, case-insensitive fingerprint selection is deployed and fresh diagnostics cover only `AmnDb048_SyncLab` | 100% |
 | Publish and install the corrected Windows client | Done: release `1.0.329+333` is published, portable startup verified, and current on both eligible clients | 100% |
-| Recover durable collision reservations on every retry | Implemented for INC-613 with exact permanent-physical-key lookups; focused and full repository regressions pass | 70% |
-| Recover durable winner registers on every upload | INC-619 exact physical/logical ID fallbacks implemented; focused regressions pass | 35% |
-| Relay identical durable rows with stable operation IDs | INC-621 fix implemented; focused regression pending full release gates | 25% |
-| Bind canonical downloads to exact winner registers | INC-627 marker and lookup fix implemented; focused regressions pass | 25% |
-| Prove both Sales exist and all ten mapped tables converge | Pending corrected server deployment and controlled retry; current safe state remains 1,931 `bu000` and 2,272 `ce000` rows per client with different checksums | 25% |
+| Recover durable collision reservations and winner registers | Done: server evidence resolves all markers and retains the 1617/2323 reservations | 100% |
+| Preserve the atomic operation manifest in every client job | Done in INC-686 with exact job-selector and client parsing coverage | 100% |
+| Reject partial group acknowledgement and retain per-table results | Done: exact ID/table-set proof, subscriber-scoped completion, and row/byte evidence | 100% |
+| Pass complete release gates | Done: 604 Python, 253 Flutter, Docker 36 scenarios, and Standard 9/9 in 592 seconds | 100% |
+| Publish/deploy client `1.0.332+336` and exact server commit | In progress | 70% |
+| Prove both Sales exist and all ten mapped tables converge | Pending controlled retry; safe state remains 1,931 `bu000` and 2,272 `ce000` rows per client with different checksums | 50% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 
-Current safety state: this is an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remains disabled and ignored. Global automatic sync is paused. INC-613 is server-side and requires no new Windows client package. Synchronization will not resume until the exact corrected server repairs both copies to 1,932 `bu000` rows and 2,273 `ce000` rows and all ten physical fingerprints match.
+Current safety state: this is an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remains disabled and ignored. Global automatic sync is paused. Synchronization will not resume until the exact corrected server/client repairs both copies to 1,932 `bu000` rows and 2,273 `ce000` rows and all ten physical fingerprints match.
 
 ## Automatic Al-Ameen synchronization (2026-09-07)
 
