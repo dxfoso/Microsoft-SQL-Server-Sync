@@ -1,5 +1,17 @@
 # Progress
 
+## Current sync health separated from retained history (2026-09-09)
+
+Overall: **100% complete. Production commit `c778d63fbae2329890c10af93011c548cfbc95fb` now shows only the ten enrolled Al-Ameen tables by default and treats a failed job as current only until a later successful retry for the same client, table, and direction. The two old `pt000` failures remain in Sync Log as audit history but no longer appear as unresolved attention. Each client's 553 paused discovered tables remain safely excluded from synchronization and can be revealed with “Show 553 paused.” Both immutable workloads are ready, public health reports `ready=true` and `compile_errors=0`, `/clients` returns HTTP 200, and the existing Windows client update artifacts remain available.**
+
+| Step | Status | Progress |
+|---|---|---:|
+| Separate discovered SQL schema from enrolled sync scope | Done: client summaries and table views default to the ten enabled tables | 100% |
+| Separate recovered job history from current failures | Done: a later successful retry supersedes the older failure in operational attention | 100% |
+| Preserve audit and diagnostics | Done: old jobs remain in Sync Log and paused inventory is available through an explicit filter | 100% |
+| Add automated regressions | Done: model/UI contracts cover enrolled scope, hidden paused inventory, superseded failures, and unresolved failures | 100% |
+| Build, publish, and deploy exact immutable images | Done: backend and frontend commit `c778d63fbae2329890c10af93011c548cfbc95fb` are ready in production | 100% |
+
 ## Second isolated Sales collision verification (2026-09-09)
 
 Overall: **100% complete for the simplified controlled collision run. The server remains healthy at commit `0066b9097544fe31a66f0157fa987b9456e058af`; client `1.0.337+341` is published, portable-startup verified, and current on both eligible clients. INC-745 resolves derived `er000.ParentNumber` through permanent `ParentGUID` before comparison without adding another conflict subsystem. The retained operation was resumed through the control plane and both nine-table atomic groups completed automatically. All ten mapped tables now report `Completed`, no pending local changes, identical v3 row counts/checksums on both clients, `bu000=1,932`, and `ce000=2,273`. Verification passes: 608 repository tests, 256 Flutter tests, all 36 disposable SQL scenarios, and Standard 9/9 in 638 seconds. Global automatic scheduling remains intentionally paused and Velvet Home remains disabled/untouched; no user action is required for this test.**
