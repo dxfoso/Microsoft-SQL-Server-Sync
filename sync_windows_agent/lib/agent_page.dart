@@ -8748,6 +8748,11 @@ ORDER BY s.name, t.name;
         }
         throw _SyncOperationGroupReplanRequired(operationGroupId);
       }
+      // The outer SQL transaction rolled back, but a confirmed table-level
+      // error may have removed that table's durable stage in its CATCH block.
+      // Discard only the in-memory manifest so the next heartbeat revalidates
+      // and reconstructs every stage from the immutable download cache.
+      _deferredOperationGroups.remove(operationGroupId);
       throw StateError(
         'Atomic Al-Ameen operation group merge will retry automatically; SQL Server rolled back the complete group. $error',
       );

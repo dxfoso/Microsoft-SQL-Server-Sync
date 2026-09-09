@@ -2,7 +2,7 @@
 
 ## Second isolated Sales collision verification (2026-09-09)
 
-Overall: **98% complete. The simplified atomic-manifest server fix remains healthy at commit `0066b9097544fe31a66f0157fa987b9456e058af`; both eligible clients run `1.0.333+337`, and all grouped uploads pass the corrected GUID boundary. INC-725 is fixed in client `1.0.334+338` with one SQL compilation boundary while preserving the single outer transaction. Verification passes: 606 repository tests, 254 Flutter tests, the complete 36-scenario disposable SQL Server suite, and Standard 9/9 in 593 seconds. Publication, eligible-client installation, and automatic completion of the retained `_SyncLab` group remain. Automatic scheduling is paused and Velvet Home is disabled/untouched; no user action is currently required.**
+Overall: **98% complete. The simplified atomic-manifest server fix remains healthy at commit `0066b9097544fe31a66f0157fa987b9456e058af`. Both eligible clients installed `1.0.334+338`; the heterogeneous-schema error is gone, but the prior failed release had removed one durable `bi000` stage and exposed INC-734's stale in-memory retry. Client `1.0.335+339` now discards only the rolled-back deferred manifest so the next heartbeat reconstructs missing stages from immutable download caches. Verification passes: 607 repository tests, 255 Flutter tests, the complete 36-scenario disposable SQL Server suite, and Standard 9/9 in 587 seconds. Publication, installation, and automatic completion of the retained `_SyncLab` group remain. Automatic scheduling is paused and Velvet Home is disabled/untouched; no user action is required.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -17,7 +17,8 @@ Overall: **98% complete. The simplified atomic-manifest server fix remains healt
 | Pass complete release gates | Done: 604 Python, 253 Flutter, Docker 36 scenarios, and Standard 9/9 in 592 seconds | 100% |
 | Publish/deploy client `1.0.332+336` and exact server commit | Done: exact server commit is healthy and both eligible clients are current | 100% |
 | Fix SQL Server GUID aggregation in the operation boundary | Done: client `1.0.333+337` is published, startup-verified, and current on both eligible clients; every grouped upload completed | 100% |
-| Recompile heterogeneous table merges without weakening atomicity | Implemented and fully verified in `1.0.334+338`: drop the prior local temp schema, cross one sqlcmd batch boundary, then compile the next table while the same outer transaction remains open | 90% |
+| Recompile heterogeneous table merges without weakening atomicity | Done in `1.0.334+338`: the invalid-column error is absent on both real lab clients | 100% |
+| Recover a durable stage removed by an older failed attempt | Implemented and fully verified in `1.0.335+339`: discard only stale in-memory group state, then rebuild from cached immutable downloads | 90% |
 | Prove both Sales exist and all ten mapped tables converge | Controlled uploads completed; grouped downloads are retained at their all-or-nothing apply boundary pending the corrected client | 70% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 

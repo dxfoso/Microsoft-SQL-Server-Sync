@@ -1381,6 +1381,20 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("if table_rows(database) != before:", rollback)
         self.assertIn("assert_business_trigger_enabled(database)", rollback)
 
+    def test_atomic_group_sql_error_discards_only_stale_deferred_manifest(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        commit = agent.split("Future<void> _commitDeferredOperationGroup(", 1)[1].split(
+            "Future<void> _refreshTargetStateAfterRemoteApply(", 1
+        )[0]
+        generic_failure = commit.split(
+            "throw _SyncOperationGroupReplanRequired(operationGroupId);", 1
+        )[1].split("// SQL is committed at this point.", 1)[0]
+
+        self.assertIn("_deferredOperationGroups.remove(operationGroupId);", generic_failure)
+        self.assertNotIn("_transferCache.clear", generic_failure)
+        self.assertNotIn("_dropTargetSnapshotStage", generic_failure)
+        self.assertIn("SQL Server rolled back the complete group", generic_failure)
+
     def test_bulk_benchmark_preserves_sqlcmd_failure_details(self):
         benchmark = read_text("tests/benchmark_sql_bulk_stage.ps1")
 
