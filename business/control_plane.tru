@@ -11094,6 +11094,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       let reconstructsDurableWinnerContent = false;
       let reassertsDurableTombstone = false;
       let durableTombstoneWinner = null;
+      let durableWinnerId = '';
       let automaticNumberDirective = null;
       if (winnerPolicyApplied) {
         accepted = operationId.length == 64;
@@ -11105,6 +11106,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
           winnerTable,
           identityKey
         );
+        durableWinnerId = winnerId;
         currentWinner = sync_row_winner_find_by_id(pendingWinners, winnerId);
         if (currentWinner == null) {
           currentWinner = sync_row_winner_find_by_id(currentWinners, winnerId);
@@ -11644,7 +11646,6 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       }
       if (accepted) {
         let durableOperationId = operationId;
-        let durableWinnerId = winnerPolicyApplied ? winnerId : '';
         let authoritativeModifiedAtUtc = sync_row_effective_modified_at(
           incomingRow,
           string.from(serverReceivedAt)

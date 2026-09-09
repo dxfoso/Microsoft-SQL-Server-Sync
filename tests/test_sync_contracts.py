@@ -2694,6 +2694,25 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
         self.assertNotIn("db.selectOne(", candidate_loop)
 
+    def test_multi_writer_upload_retains_physical_winner_id_across_marker_scope(self):
+        control_plane = read_text("business/control_plane.tru")
+        upload = control_plane.split("function jobs_multi_writer_upload(", 1)[1].split(
+            "function jobs_multi_writer_download(", 1
+        )[0]
+        candidate_loop = upload.split(
+            "for (const incomingRow of effectiveIncomingRows)", 2
+        )[2].split("if (pendingWinners.length > 0)", 1)[0]
+
+        declaration = "let durableWinnerId = '';"
+        policy_branch = "if (winnerPolicyApplied) {"
+        assignment = "durableWinnerId = winnerId;"
+        marker_append = "acceptedOperationIds = acceptedOperationIds.concat([{"
+        self.assertIn(declaration, candidate_loop)
+        self.assertIn(assignment, candidate_loop)
+        self.assertLess(candidate_loop.index(declaration), candidate_loop.index(policy_branch))
+        self.assertLess(candidate_loop.index(assignment), candidate_loop.index(marker_append))
+        self.assertNotIn("winnerPolicyApplied ? winnerId", candidate_loop)
+
     def test_root_backend_validation_uses_the_locked_runtime_rust_version(self):
         dockerfile = read_text("Dockerfile.backend")
         backend_dockerfile = read_text("backend/Dockerfile")
