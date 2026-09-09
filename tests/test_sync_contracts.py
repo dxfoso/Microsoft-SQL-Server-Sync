@@ -2671,10 +2671,15 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("durableWinner = sync_row_winner_find_durable(", download)
         marker_loop = download.split(
             "for (const candidateOperation of candidateAcceptedOperations)", 1
-        )[1].split("let durableWinnerOperationIds", 1)[0]
+        )[1].split("if (automaticNumberInventoryOnly)", 1)[0]
         self.assertNotIn("db.selectOne(", marker_loop)
         self.assertIn("candidateOperation.durableWinnerId", marker_loop)
         self.assertIn("durableWinnerId,", download)
+        self.assertIn(
+            "string.from(durableWinner.operationId).trim() != durableOperationId",
+            marker_loop,
+        )
+        self.assertNotIn("durableWinnerOperationIds", marker_loop)
 
     def test_multi_writer_upload_resolves_each_candidate_register_exactly(self):
         control_plane = read_text("business/control_plane.tru")

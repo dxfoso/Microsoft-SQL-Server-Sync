@@ -2889,7 +2889,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("clients report different SQL unique-key definitions", upload_body)
         self.assertIn("acceptedOperationIds", download_body)
         self.assertIn("winnerPolicyApplied", download_body)
-        self.assertIn("let durableWinners = []", download_body)
+        self.assertIn("acceptedOperationIds = [];", download_body)
         self.assertIn(
             "for (const candidateOperation of candidateAcceptedOperations)",
             download_body,
@@ -2898,17 +2898,14 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("sync_row_winner_find_durable_by_id(", download_body)
         marker_loop = download_body.split(
             "for (const candidateOperation of candidateAcceptedOperations)", 1
-        )[1].split("let durableWinnerOperationIds", 1)[0]
+        )[1].split("if (automaticNumberInventoryOnly)", 1)[0]
         self.assertNotIn("db.selectOne(", marker_loop)
         self.assertIn("candidateOperation.durableWinnerId", marker_loop)
         self.assertIn(
-            "string_array_contains(durableWinnerOperationIds, durableOperationId)",
-            download_body,
+            "string.from(durableWinner.operationId).trim() != durableOperationId",
+            marker_loop,
         )
-        self.assertIn(
-            "durableWinner.operationId).trim() == durableOperationId",
-            download_body,
-        )
+        self.assertNotIn("durableWinnerOperationIds", marker_loop)
         self.assertIn("delete_sync_row_winner_batch()", reset_body)
         self.assertIn("syncRowWinnerDeletedCount", reset_body)
 

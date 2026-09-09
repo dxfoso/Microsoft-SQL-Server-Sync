@@ -11979,10 +11979,12 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     // as ordinary pruning produces a successful empty download. A page is
     // already bounded by the upload chunk limit, so exact lookups are bounded
     // and preserve the fail-closed winner check.
-    let durableWinners = [];
+    acceptedOperationIds = [];
+    acceptedOperations = [];
     for (const candidateOperation of candidateAcceptedOperations) {
+      const operationId = string.from(candidateOperation.operationId).trim();
       const durableOperationId = string.from(
-        candidateOperation.durableOperationId ?? ''
+        candidateOperation.durableOperationId ?? operationId
       ).trim();
       const durableWinnerId = string.from(
         candidateOperation.durableWinnerId ?? ''
@@ -12006,55 +12008,28 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
           durableOperationId
         );
       }
-      if (durableWinner != null) {
-        durableWinners = durableWinners.concat([durableWinner]);
+      if (durableWinner == null ||
+          operationId.length == 0 ||
+          string.from(durableWinner.operationId).trim() != durableOperationId) {
+        continue;
       }
-    }
-    let durableWinnerOperationIds = [];
-    for (const durableWinner of durableWinners) {
-      const operationId = string.from(durableWinner.operationId).trim();
-      if (operationId.length != 0) {
-        durableWinnerOperationIds = durableWinnerOperationIds.concat([operationId]);
-      }
-    }
-    acceptedOperationIds = [];
-    acceptedOperations = [];
-    for (const candidateOperation of candidateAcceptedOperations) {
-      const operationId = string.from(candidateOperation.operationId).trim();
-      const durableOperationId = string.from(
-        candidateOperation.durableOperationId ?? operationId
+      const authoritativeModifiedAtUtc = string.from(
+        durableWinner.modifiedAtUtc ?? candidateOperation.authoritativeModifiedAtUtc ?? ''
       ).trim();
-      if (operationId.length != 0 &&
-          string_array_contains(durableWinnerOperationIds, durableOperationId)) {
-        let authoritativeModifiedAtUtc = string.from(
-          candidateOperation.authoritativeModifiedAtUtc ?? ''
-        ).trim();
-        let authoritativeOperation = string.from(
-          candidateOperation.authoritativeOperation ?? ''
-        ).trim().toUpperCase();
-        let durableTombstoneReassertion = false;
-        for (const durableWinner of durableWinners) {
-          if (string.from(durableWinner.operationId).trim() == durableOperationId) {
-            authoritativeModifiedAtUtc = string.from(
-              durableWinner.modifiedAtUtc ?? authoritativeModifiedAtUtc
-            ).trim();
-            authoritativeOperation = string.from(
-              durableWinner.operation ?? authoritativeOperation
-            ).trim().toUpperCase();
-            durableTombstoneReassertion =
-              candidateOperation.durableTombstoneReassertion == true &&
-              authoritativeOperation == 'D';
-          }
-        }
-        acceptedOperationIds = acceptedOperationIds.concat([operationId]);
-        acceptedOperations = acceptedOperations.concat([{
-          operationId,
-          authoritativeModifiedAtUtc,
-          authoritativeOperation,
-          durableTombstoneReassertion,
-          automaticNumber: candidateOperation.automaticNumber
-        }]);
-      }
+      const authoritativeOperation = string.from(
+        durableWinner.operation ?? candidateOperation.authoritativeOperation ?? ''
+      ).trim().toUpperCase();
+      const durableTombstoneReassertion =
+        candidateOperation.durableTombstoneReassertion == true &&
+        authoritativeOperation == 'D';
+      acceptedOperationIds = acceptedOperationIds.concat([operationId]);
+      acceptedOperations = acceptedOperations.concat([{
+        operationId,
+        authoritativeModifiedAtUtc,
+        authoritativeOperation,
+        durableTombstoneReassertion,
+        automaticNumber: candidateOperation.automaticNumber
+      }]);
     }
   }
   // This phase exists only to initialize the owner-wide maximum. Applying its
