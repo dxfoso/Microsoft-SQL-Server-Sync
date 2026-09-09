@@ -15,6 +15,21 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $verifier = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'verify_live_client_update.py'))
+$savedErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $resolvedClientCommitLines = @(
+        & git -C $repoRoot rev-parse --verify "$ExpectedClientCommit^{commit}" 2>$null
+    )
+    $clientCommitResolveExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $savedErrorActionPreference
+}
+$resolvedClientCommit = ($resolvedClientCommitLines -join '').Trim()
+if ($clientCommitResolveExitCode -ne 0 -or $resolvedClientCommit -ne $ExpectedClientCommit) {
+    throw 'ExpectedClientCommit must identify an exact commit available in this repository.'
+}
 foreach ($value in @($ClientName, $TargetVersion, $LogPrefix, $SshAlias, $Namespace, $AdminSecretName)) {
     if ([string]::IsNullOrWhiteSpace($value) -or $value.Contains('"') -or $value.Contains("`r") -or $value.Contains("`n")) {
         throw 'Client update launcher values must be non-empty single-line text without quote characters.'
