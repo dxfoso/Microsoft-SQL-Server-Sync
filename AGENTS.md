@@ -17,6 +17,14 @@ Use this from the repository root:
 
 Use the launcher when a local stack restart is actually needed.
 
+## Long-Term Design Simplification Rule
+
+- Before implementing a long-term fix or design change, explicitly check whether the correctness path can be made simpler.
+- Prefer the smallest durable design that satisfies the required safety invariants over layered short-term patches, duplicated state, repeated transformations, or multi-pass reconciliation.
+- Remove obsolete branches and intermediate representations when the simpler design fully replaces them; do not preserve accidental complexity solely because it already exists.
+- Do not simplify away required guarantees such as atomicity, explicit-delete semantics, deterministic ordering, offline recovery, idempotency, relational integrity, or fail-closed handling of ambiguous money/accounting conflicts.
+- Regression tests must describe the simpler invariant directly so future fixes do not reintroduce the removed complexity.
+
 ## Issue Documentation and Regression Rule
 
 - Every discovered defect, production incident, failed deployment, unexpected client behavior, or synchronization safety gap must be documented in the root `issue.md` incident matrix before the work is considered complete.
