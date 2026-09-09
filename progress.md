@@ -2,7 +2,7 @@
 
 ## Second isolated Sales collision verification (2026-09-08)
 
-Overall: **91% complete. Exact commit `91ba335` passed 603 repository tests, all 36 disposable SQL scenarios, Standard 9/9 in 614 seconds, immutable deployment, and two public checks. Its controlled retry proved INC-621: unchanged full snapshots preserve deterministic operation IDs, but durable-content relay incorrectly required a different ID and rejected both final Sales/voucher rows as stale. The relay now keys on identical row content and durable identity regardless of whether the operation ID changed. Automatic sync remains paused while the final corrected release gates and physical convergence run again. No user action is currently required.**
+Overall: **92% complete. Exact release `1a778b0` passed 603 repository tests, all 36 disposable SQL scenarios, Standard 9/9, deployment, and public health. Both clients then uploaded all Sales/voucher rows and the correct 1617/2323 directives, but INC-627 proved download pruning used a non-unique operation ID and returned zero canonical rows. Accepted markers now carry and resolve the exact durable physical winner-register ID, with a legacy fallback for old jobs. Automatic sync remains paused while this final transport fix is gated, deployed, and physically verified. No user action is currently required.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -14,6 +14,7 @@ Overall: **91% complete. Exact commit `91ba335` passed 603 repository tests, all
 | Recover durable collision reservations on every retry | Implemented for INC-613 with exact permanent-physical-key lookups; focused and full repository regressions pass | 70% |
 | Recover durable winner registers on every upload | INC-619 exact physical/logical ID fallbacks implemented; focused regressions pass | 35% |
 | Relay identical durable rows with stable operation IDs | INC-621 fix implemented; focused regression pending full release gates | 25% |
+| Bind canonical downloads to exact winner registers | INC-627 marker and lookup fix implemented; focused regressions pass | 25% |
 | Prove both Sales exist and all ten mapped tables converge | Pending corrected server deployment and controlled retry; current safe state remains 1,931 `bu000` and 2,272 `ce000` rows per client with different checksums | 25% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 

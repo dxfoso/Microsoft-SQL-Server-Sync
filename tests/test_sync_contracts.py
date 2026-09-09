@@ -2661,18 +2661,20 @@ class SyncContractsTests(unittest.TestCase):
             "function jobs_complete(", 1
         )[0]
 
-        self.assertIn("for (const durableOperationIdValue of candidateDurableOperationIds)", download)
+        self.assertIn("for (const candidateOperation of candidateAcceptedOperations)", download)
         helper = control_plane.split("function sync_row_winner_find_durable(", 1)[1].split(
             "function sync_row_winner_find_by_physical_key(", 1
         )[0]
         self.assertIn("db.selectOne(SyncRowWinner", helper)
         self.assertIn("operationId", helper)
-        self.assertIn("const durableWinner = sync_row_winner_find_durable(", download)
+        self.assertIn("durableWinner = sync_row_winner_find_durable_by_id(", download)
+        self.assertIn("durableWinner = sync_row_winner_find_durable(", download)
         marker_loop = download.split(
-            "for (const durableOperationIdValue of candidateDurableOperationIds)", 1
+            "for (const candidateOperation of candidateAcceptedOperations)", 1
         )[1].split("let durableWinnerOperationIds", 1)[0]
         self.assertNotIn("db.selectOne(", marker_loop)
-        self.assertNotIn("operationId: { in: candidateDurableOperationIds }", download)
+        self.assertIn("candidateOperation.durableWinnerId", marker_loop)
+        self.assertIn("durableWinnerId,", download)
 
     def test_multi_writer_upload_resolves_each_candidate_register_exactly(self):
         control_plane = read_text("business/control_plane.tru")

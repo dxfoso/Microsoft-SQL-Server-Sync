@@ -11644,6 +11644,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
       }
       if (accepted) {
         let durableOperationId = operationId;
+        let durableWinnerId = winnerPolicyApplied ? winnerId : '';
         let authoritativeModifiedAtUtc = sync_row_effective_modified_at(
           incomingRow,
           string.from(serverReceivedAt)
@@ -11660,6 +11661,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
           durableOperationId = string.from(
             durableTombstoneWinner.operationId
           ).trim();
+          durableWinnerId = string.from(durableTombstoneWinner.id).trim();
           authoritativeModifiedAtUtc = string.from(
             durableTombstoneWinner.modifiedAtUtc ?? authoritativeModifiedAtUtc
           ).trim();
@@ -11668,6 +11670,7 @@ function jobs_multi_writer_upload(jobId: string, batchId: string, clientName: st
         acceptedOperationIds = acceptedOperationIds.concat([{
           operationId,
           durableOperationId,
+          durableWinnerId,
           authoritativeModifiedAtUtc,
           authoritativeOperation,
           durableTombstoneReassertion: reassertsDurableTombstone,
@@ -11911,7 +11914,6 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   let chunkIsDelta = true;
   let candidateAcceptedOperationIds = [];
   let candidateAcceptedOperations = [];
-  let candidateDurableOperationIds = [];
   let winnerPolicyApplied = false;
   if (batch.receivedChunks.length == 0) {
     chunkIsDelta = false;
@@ -11938,14 +11940,17 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
             let durableOperationId = string.from(
               acceptedRow.durableOperationId ?? acceptedOperationId
             ).trim();
+            const durableWinnerId = string.from(
+              acceptedRow.durableWinnerId ?? ''
+            ).trim();
             if (durableOperationId.length == 0) {
               durableOperationId = acceptedOperationId;
             }
             candidateAcceptedOperationIds = candidateAcceptedOperationIds.concat([acceptedOperationId]);
-            candidateDurableOperationIds = candidateDurableOperationIds.concat([durableOperationId]);
             candidateAcceptedOperations = candidateAcceptedOperations.concat([{
               operationId: acceptedOperationId,
               durableOperationId,
+              durableWinnerId,
               authoritativeModifiedAtUtc: string.from(
                 acceptedRow.authoritativeModifiedAtUtc ?? ''
               ).trim(),
@@ -11974,16 +11979,32 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
     // already bounded by the upload chunk limit, so exact lookups are bounded
     // and preserve the fail-closed winner check.
     let durableWinners = [];
-    for (const durableOperationIdValue of candidateDurableOperationIds) {
-      const durableOperationId = string.from(durableOperationIdValue).trim();
-      if (durableOperationId.length == 0) {
+    for (const candidateOperation of candidateAcceptedOperations) {
+      const durableOperationId = string.from(
+        candidateOperation.durableOperationId ?? ''
+      ).trim();
+      const durableWinnerId = string.from(
+        candidateOperation.durableWinnerId ?? ''
+      ).trim();
+      if (durableOperationId.length == 0 && durableWinnerId.length == 0) {
         continue;
       }
-      const durableWinner = sync_row_winner_find_durable(
-        string.from(batch.ownerUserId ?? '').trim(),
-        string.from(batch.table),
-        durableOperationId
-      );
+      let durableWinner = null;
+      if (durableWinnerId.length != 0) {
+        durableWinner = sync_row_winner_find_durable_by_id(
+          string.from(batch.ownerUserId ?? '').trim(),
+          string.from(batch.table),
+          durableWinnerId
+        );
+      } else {
+        // Backward compatibility for retained batches created before exact
+        // winner-register IDs were archived with every accepted marker.
+        durableWinner = sync_row_winner_find_durable(
+          string.from(batch.ownerUserId ?? '').trim(),
+          string.from(batch.table),
+          durableOperationId
+        );
+      }
       if (durableWinner != null) {
         durableWinners = durableWinners.concat([durableWinner]);
       }
