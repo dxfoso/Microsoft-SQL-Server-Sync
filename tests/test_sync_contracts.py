@@ -1365,6 +1365,22 @@ class SyncContractsTests(unittest.TestCase):
             agent_page,
         )
 
+    def test_connection_loss_fixture_terminates_only_a_stranded_observer(self):
+        scenarios = read_text("tests/docker-sync/run_scenarios.py")
+        body = scenarios.split("def run_interrupted_apply(", 1)[1].split(
+            "def assert_connection_loss_atomicity(", 1
+        )[0]
+
+        self.assertIn("except subprocess.TimeoutExpired:", body)
+        self.assertIn("process.kill()", body)
+        self.assertIn("stdout, stderr = process.communicate()", body)
+        self.assertIn("if process.returncode == 0:", body)
+        rollback = scenarios.split("def assert_connection_loss_atomicity(", 1)[1].split(
+            "def assert_commit_response_loss_is_idempotent(", 1
+        )[0]
+        self.assertIn("if table_rows(database) != before:", rollback)
+        self.assertIn("assert_business_trigger_enabled(database)", rollback)
+
     def test_bulk_benchmark_preserves_sqlcmd_failure_details(self):
         benchmark = read_text("tests/benchmark_sql_bulk_stage.ps1")
 

@@ -466,11 +466,15 @@ String buildTargetSnapshotStageApplySql({
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 $transactionIsolation
+IF OBJECT_ID(N'tempdb..#source_rows', N'U') IS NOT NULL
+BEGIN
+  DROP TABLE #source_rows;
+END;
+-- Force the next table-specific batch to compile only after SQL Server has
+-- removed the preceding table's differently shaped local temporary table.
+-- One sqlcmd session and the outer operation-group transaction survive GO.
+GO
 BEGIN TRY
-  IF OBJECT_ID(N'tempdb..#source_rows', N'U') IS NOT NULL
-  BEGIN
-    DROP TABLE #source_rows;
-  END;
   SELECT __row_num, $sourceColumnList
   INTO $workingSource
   FROM $stageTarget;

@@ -2,7 +2,7 @@
 
 ## Second isolated Sales collision verification (2026-09-09)
 
-Overall: **96% complete. The simplified atomic-manifest fix is deployed at commit `0066b9097544fe31a66f0157fa987b9456e058af`, and both eligible clients run `1.0.332+336`. A fresh controlled retry exposed INC-711 before any database write: SQL Server rejects `MAX(uniqueidentifier)` in the operation-boundary validator. The durable fix normalizes the GUID to `binary(16)` only at that aggregation boundary and converts it back, avoiding table-specific bypasses. Client `1.0.333+337` is now being tested and published; automatic sync remains paused, the jobs remain fail-closed, and no user action is currently required.**
+Overall: **98% complete. The simplified atomic-manifest server fix remains healthy at commit `0066b9097544fe31a66f0157fa987b9456e058af`; both eligible clients run `1.0.333+337`, and all grouped uploads pass the corrected GUID boundary. INC-725 is fixed in client `1.0.334+338` with one SQL compilation boundary while preserving the single outer transaction. Verification passes: 606 repository tests, 254 Flutter tests, the complete 36-scenario disposable SQL Server suite, and Standard 9/9 in 593 seconds. Publication, eligible-client installation, and automatic completion of the retained `_SyncLab` group remain. Automatic scheduling is paused and Velvet Home is disabled/untouched; no user action is currently required.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -16,8 +16,9 @@ Overall: **96% complete. The simplified atomic-manifest fix is deployed at commi
 | Reject partial group acknowledgement with one simple bulk transition | Done: exact ID/table-set proof, subscriber-scoped completion, and aggregate row/byte evidence on the acknowledgement | 100% |
 | Pass complete release gates | Done: 604 Python, 253 Flutter, Docker 36 scenarios, and Standard 9/9 in 592 seconds | 100% |
 | Publish/deploy client `1.0.332+336` and exact server commit | Done: exact server commit is healthy and both eligible clients are current | 100% |
-| Fix SQL Server GUID aggregation in the operation boundary | Implemented as one canonical type conversion; regression and release verification in progress | 70% |
-| Prove both Sales exist and all ten mapped tables converge | Pending controlled retry; safe state remains 1,931 `bu000` and 2,272 `ce000` rows per client with different checksums | 50% |
+| Fix SQL Server GUID aggregation in the operation boundary | Done: client `1.0.333+337` is published, startup-verified, and current on both eligible clients; every grouped upload completed | 100% |
+| Recompile heterogeneous table merges without weakening atomicity | Implemented and fully verified in `1.0.334+338`: drop the prior local temp schema, cross one sqlcmd batch boundary, then compile the next table while the same outer transaction remains open | 90% |
+| Prove both Sales exist and all ten mapped tables converge | Controlled uploads completed; grouped downloads are retained at their all-or-nothing apply boundary pending the corrected client | 70% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 
 Current safety state: this is an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remains disabled and ignored. Global automatic sync is paused. Synchronization will not resume until the exact corrected server/client repairs both copies to 1,932 `bu000` rows and 2,273 `ce000` rows and all ten physical fingerprints match.

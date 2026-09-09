@@ -132,6 +132,31 @@ def request_client_update(base_url: str, token: str, client_name: str, target_ve
     )
 
 
+def request_registered_client_update(
+    base_url: str,
+    token: str,
+    client_name: str,
+    target_version: str,
+    *,
+    attempts: int = 3,
+) -> dict:
+    """Retry a transient not-found only when live state proves the exact client exists."""
+    for attempt in range(1, max(attempts, 1) + 1):
+        try:
+            return request_client_update(
+                base_url, token, client_name, target_version
+            )
+        except ApiError as exc:
+            transient_not_found = (
+                "HTTP 404" in str(exc) and "client not found" in str(exc).lower()
+            )
+            if not transient_not_found or attempt >= max(attempts, 1):
+                raise
+            find_agent_summary(live_state(base_url, token), client_name)
+            time.sleep(1)
+    raise ApiError("client update request retry exhausted")
+
+
 def heartbeat_age_minutes(last_heartbeat: str, now: datetime | None = None) -> float | None:
     normalized = str(last_heartbeat or "").strip()
     if not normalized:
@@ -214,7 +239,9 @@ def main() -> int:
     token, user = login(args.base_url, args.username, args.password)
     print(f"logged_in_as={user.get('username')} role={user.get('role')}")
 
-    request_result = request_client_update(args.base_url, token, args.client_name, args.target_version)
+    request_result = request_registered_client_update(
+        args.base_url, token, args.client_name, args.target_version
+    )
     print(f"request={json.dumps(request_result, sort_keys=True)}")
 
     deadline = time.time() + max(args.wait_seconds, 1)

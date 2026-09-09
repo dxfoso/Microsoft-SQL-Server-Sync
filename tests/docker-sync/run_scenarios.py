@@ -1242,7 +1242,16 @@ def run_interrupted_apply(generated, context_hex, *, restart_sql=False):
                 process.kill()
         else:
             sqlcmd(f"KILL {spid};")
-        stdout, stderr = process.communicate(timeout=45)
+        try:
+            stdout, stderr = process.communicate(timeout=45)
+        except subprocess.TimeoutExpired:
+            # KILL and SQL restart already severed the server transaction. Some
+            # Windows ODBC/sqlcmd builds can nevertheless keep the dead client
+            # process waiting. Terminate only that isolated observer, then let
+            # the physical rollback and trigger assertions below remain the
+            # source of truth.
+            process.kill()
+            stdout, stderr = process.communicate()
         if process.returncode == 0:
             raise AssertionError(
                 f"Interrupted SQL apply unexpectedly succeeded: {stdout}\n{stderr}"

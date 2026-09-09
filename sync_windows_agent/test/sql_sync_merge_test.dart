@@ -35,6 +35,61 @@ void main() {
     );
   });
 
+  test('atomic group recompiles each differently shaped source table', () {
+    const id = SqlSyncColumnDefinition(
+      name: 'Id',
+      sqlType: 'int',
+      maxLength: 4,
+      precision: 10,
+      scale: 0,
+      isIdentity: false,
+      isComputed: false,
+    );
+    const quantity = SqlSyncColumnDefinition(
+      name: 'Qty',
+      sqlType: 'float',
+      maxLength: 8,
+      precision: 53,
+      scale: 0,
+      isIdentity: false,
+      isComputed: false,
+    );
+    final header = buildTargetSnapshotStageApplySql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'header',
+      stageTableName: '#stage_header',
+      columns: const [id],
+      primaryKeyColumns: const ['Id'],
+      manageTriggers: false,
+    );
+    final line = buildTargetSnapshotStageApplySql(
+      database: 'db',
+      schema: 'dbo',
+      table: 'line',
+      stageTableName: '#stage_line',
+      columns: const [id, quantity],
+      primaryKeyColumns: const ['Id'],
+      manageTriggers: false,
+    );
+    final sql = buildAtomicTargetSnapshotGroupApplySql([header, line]);
+    const recompileBoundary =
+        "DROP TABLE #source_rows;\nEND;\n-- Force the next table-specific batch to compile only after SQL Server has\n-- removed the preceding table's differently shaped local temporary table.\n-- One sqlcmd session and the outer operation-group transaction survive GO.\nGO\nBEGIN TRY";
+
+    expect(
+      RegExp(RegExp.escape(recompileBoundary)).allMatches(sql),
+      hasLength(2),
+    );
+    expect(
+      sql.indexOf(recompileBoundary),
+      lessThan(sql.indexOf('SELECT __row_num, [Id]')),
+    );
+    expect(
+      sql.lastIndexOf(recompileBoundary),
+      lessThan(sql.indexOf('SELECT __row_num, [Id], [Qty]')),
+    );
+  });
+
   test('atomic group rejects every post-upload local row before merge', () {
     const columns = [
       SqlSyncColumnDefinition(

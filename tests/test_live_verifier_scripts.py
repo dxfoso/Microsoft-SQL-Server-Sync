@@ -273,6 +273,49 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         with self.assertRaises(verifier.ApiError):
             verifier.find_agent_summary({"agents": [{"clientName": "c2"}]}, "c1")
 
+    def test_client_update_retries_transient_not_found_only_for_registered_client(self):
+        verifier = load_script_module(
+            "verify_live_client_update_registered_retry_script",
+            "scripts/verify_live_client_update.py",
+        )
+        attempts = []
+
+        def fake_request(base_url, token, client_name, target_version):
+            attempts.append(client_name)
+            if len(attempts) == 1:
+                raise verifier.ApiError('HTTP 404: {"error":"client not found"}')
+            return {"ok": True, "clientName": client_name}
+
+        verifier.request_client_update = fake_request
+        verifier.live_state = lambda base_url, token: {
+            "agents": [{"clientName": "velvet factory"}]
+        }
+        verifier.time.sleep = lambda seconds: None
+
+        result = verifier.request_registered_client_update(
+            "https://sync.velvet-leaf.com",
+            "token-1",
+            "velvet factory",
+            "1.0.333+337",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(attempts, ["velvet factory", "velvet factory"])
+
+        verifier.request_client_update = lambda *args: (_ for _ in ()).throw(
+            verifier.ApiError('HTTP 404: {"error":"client not found"}')
+        )
+        verifier.live_state = lambda base_url, token: {
+            "agents": [{"clientName": "another client"}]
+        }
+        with self.assertRaises(verifier.ApiError):
+            verifier.request_registered_client_update(
+                "https://sync.velvet-leaf.com",
+                "token-1",
+                "missing client",
+                "1.0.333+337",
+            )
+
     def test_client_update_retryable_transport_error_matches_connection_reset(self):
         verifier = load_script_module(
             "verify_live_client_update_script",
