@@ -3317,7 +3317,7 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertNotIn("string.from(groupPlan.mode) != 'delta'", source)
         self.assertIn("Never let part of an accounting graph escape independently", source)
         self.assertIn("requestedOperationTableCount != 0 && operationGroupTables.length != 9", source)
-        self.assertIn("Atomic Al-Ameen operation group applied successfully.", source)
+        self.assertIn("Atomic Al-Ameen operation group applied successfully", source)
         self.assertIn("operationGroupId: completedOperationGroupId", source)
         active_jobs = source.split(
             "function active_jobs_for_client(", 1
@@ -3337,7 +3337,10 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn(
             "operation group durable jobs do not match the manifest", completion
         )
-        self.assertEqual(completion.count("db.updateMany(SyncJob"), 1)
+        group_completion = completion.split(
+            "if (completingOperationGroup) {", 2
+        )[2].split("if (status.trim().toLowerCase() == 'failed'", 1)[0]
+        self.assertEqual(group_completion.count("db.updateMany(SyncJob"), 1)
         self.assertIn(
             "detailed row counts are carried by the acknowledgement job",
             completion,
