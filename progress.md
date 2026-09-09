@@ -2,7 +2,7 @@
 
 ## Second isolated Sales collision verification (2026-09-09)
 
-Overall: **96% complete. Root cause INC-686 is fixed: job delivery omitted the stored nine-table operation-group manifest, so clients acknowledged only `ac000` and the server closed the remaining downloads. Commit `4e14c619f491048d18173c3d23c745780e80d33c` preserves the manifest end-to-end, requires an exact fail-closed acknowledgement, scopes completion to one subscriber, and records per-table results. All 604 Python tests, 253 Flutter tests, 36 disposable SQL scenarios, and the 9/9 Standard transaction/recovery gate pass. Publication, deployment, client update, and final physical `_SyncLab` convergence remain; no user action is currently required.**
+Overall: **96% complete. The simplified atomic-manifest fix is deployed at commit `0066b9097544fe31a66f0157fa987b9456e058af`, and both eligible clients run `1.0.332+336`. A fresh controlled retry exposed INC-711 before any database write: SQL Server rejects `MAX(uniqueidentifier)` in the operation-boundary validator. The durable fix normalizes the GUID to `binary(16)` only at that aggregation boundary and converts it back, avoiding table-specific bypasses. Client `1.0.333+337` is now being tested and published; automatic sync remains paused, the jobs remain fail-closed, and no user action is currently required.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -15,7 +15,8 @@ Overall: **96% complete. Root cause INC-686 is fixed: job delivery omitted the s
 | Preserve the atomic operation manifest in every client job | Done in INC-686 with exact job-selector and client parsing coverage | 100% |
 | Reject partial group acknowledgement with one simple bulk transition | Done: exact ID/table-set proof, subscriber-scoped completion, and aggregate row/byte evidence on the acknowledgement | 100% |
 | Pass complete release gates | Done: 604 Python, 253 Flutter, Docker 36 scenarios, and Standard 9/9 in 592 seconds | 100% |
-| Publish/deploy client `1.0.332+336` and exact server commit | In progress | 70% |
+| Publish/deploy client `1.0.332+336` and exact server commit | Done: exact server commit is healthy and both eligible clients are current | 100% |
+| Fix SQL Server GUID aggregation in the operation boundary | Implemented as one canonical type conversion; regression and release verification in progress | 70% |
 | Prove both Sales exist and all ten mapped tables converge | Pending controlled retry; safe state remains 1,931 `bu000` and 2,272 `ce000` rows per client with different checksums | 50% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 

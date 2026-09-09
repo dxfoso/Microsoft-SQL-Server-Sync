@@ -34,6 +34,13 @@ void main() {
     expect(sql, contains('header.Total'));
     expect(sql, contains('lines.LineTotal'));
     expect(sql, contains('relations.RelationCount'));
+    expect(
+      sql,
+      contains(
+        'CONVERT(uniqueidentifier, MAX(CONVERT(binary(16), relation.EntryGUID)))',
+      ),
+    );
+    expect(sql, isNot(contains('MAX(relation.EntryGUID)')));
     expect(sql, contains('vouchers.Debit'));
     expect(sql, contains('ledger.Credit'));
     expect(sql, contains('__SQL_SYNC_ALAMEEN_BOUNDARY__='));

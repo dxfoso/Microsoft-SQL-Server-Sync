@@ -99,7 +99,8 @@ OUTER APPLY (
   WHERE line.ParentGUID = candidate.GUID
 ) AS lines
 OUTER APPLY (
-  SELECT COUNT_BIG(*) AS RelationCount, MAX(relation.EntryGUID) AS EntryGUID
+  SELECT COUNT_BIG(*) AS RelationCount,
+         CONVERT(uniqueidentifier, MAX(CONVERT(binary(16), relation.EntryGUID))) AS EntryGUID
   FROM $db.[dbo].[er000] AS relation
   WHERE relation.ParentGUID = candidate.GUID
 ) AS relations
