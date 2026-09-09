@@ -131,7 +131,8 @@ class SyncContractsTests(unittest.TestCase):
         )
         self.assertNotIn("updateTableSyncPolicy(", changed_discovery)
         self.assertIn("enabled: current.enabled", changed_discovery)
-        self.assertIn("the remote table policy kept it disabled", changed_discovery)
+        self.assertIn("sync.policy.disabled_change_detected", changed_discovery)
+        self.assertIn("level: AgentLogLevel.debug", changed_discovery)
         self.assertIn("'table_sync_policy_auto_enroll'", api)
         self.assertIn("N'unsupported'", discovery)
         self.assertIn("column_type.name IN", discovery)
@@ -2402,6 +2403,10 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("Never classify a shell host as a Flutter dev process.", build_helpers)
         self.assertIn("'powershell.exe', 'pwsh.exe', 'conhost.exe'", build_helpers)
         self.assertIn("$_.Name -eq 'cmd.exe'", build_helpers)
+        self.assertIn("$clientInputs = @(", build_helpers)
+        self.assertIn("'sync_windows_agent'", build_helpers)
+        self.assertIn("git -C $RepoRoot status --porcelain -- @clientInputs", build_helpers)
+        self.assertNotIn("git -C $RepoRoot status --porcelain 2>$null", build_helpers)
         self.assertNotIn(
             "defaultValue: 'http://127.0.0.1:6006/call'",
             client_api,
@@ -2642,6 +2647,9 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_validateAlameenOperationGroupBoundary", agent)
         self.assertIn("boundary.violationCount", agent)
         self.assertIn("job.operationGroupId?.trim().isNotEmpty", agent)
+        self.assertIn("operationGroupId: operationGroupId", agent)
+        self.assertIn("operationGroupResults:", agent)
+        self.assertIn("ordered.map", agent)
         self.assertIn("operationGroupSnapshotVersion ?? tracking.currentVersion", agent)
         self.assertIn("_deferredOperationGroups", agent)
         self.assertIn("buildAtomicTargetSnapshotGroupApplySql", agent)

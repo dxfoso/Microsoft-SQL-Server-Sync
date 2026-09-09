@@ -3319,6 +3319,25 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn("requestedOperationTableCount != 0 && operationGroupTables.length != 9", source)
         self.assertIn("Atomic Al-Ameen operation group applied successfully.", source)
         self.assertIn("operationGroupId: completedOperationGroupId", source)
+        active_jobs = source.split(
+            "function active_jobs_for_client(", 1
+        )[1].split("\n}", 1)[0]
+        self.assertIn("'operationGroupId', 'operationGroupTables'", active_jobs)
+        completion = source.split("function jobs_complete(", 1)[1].split(
+            "\n}", 1
+        )[0]
+        self.assertIn("ackOperationGroupId", completion)
+        self.assertIn("operationGroupResults", completion)
+        self.assertIn(
+            "operation group acknowledgement is missing its complete manifest",
+            completion,
+        )
+        self.assertIn("subscriberClientName: job.subscriberClientName", completion)
+        self.assertIn("const durableOperationGroupJobs = db.selectMany", completion)
+        self.assertIn(
+            "operation group durable jobs do not match the manifest", completion
+        )
+        self.assertIn("rowCount: int.from(result.rowCount ?? 0)", completion)
         self.assertIn(
             "function alameen_business_operation_tables(tables: array<string>): array<string>",
             source,

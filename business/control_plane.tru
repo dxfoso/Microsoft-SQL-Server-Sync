@@ -1772,7 +1772,7 @@ function find_waiting_download_job(sourceClientName: string, targetClientName: s
   const jobs = db.selectMany(SyncJob, {
     where: { clientName: targetClientName, sourceClientName, table },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId', 'operationGroupId', 'operationGroupTables', 'protocolVersion', 'syncEpoch'],
     limit: 20
   });
   if (jobs == null) {
@@ -1925,7 +1925,7 @@ function list_job_rows(): array<json> {
   const rows = db.selectMany(SyncJob, {
     where: { createdAt: { lte: now_iso() } },
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId', 'operationGroupId', 'operationGroupTables', 'protocolVersion', 'syncEpoch'],
     limit: 1000
   });
   if (rows == null) {
@@ -2903,7 +2903,7 @@ function live_state_job_rows_for(current: map<json>, limit: int): array<json> {
   const rows = db.selectMany(SyncJob, {
     where,
     orderBy: { field: 'createdAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId', 'operationGroupId', 'operationGroupTables', 'protocolVersion', 'syncEpoch'],
     limit: limit + 1
   });
   if (rows == null) {
@@ -2959,7 +2959,7 @@ function live_state_active_job_rows_for(current: map<json>): array<json> {
   const rows = db.selectMany(SyncJob, {
     where,
     orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'rejectedRowCount', 'rejectionSummary', 'clientUserId', 'ownerUserId', 'batchId', 'operationGroupId', 'operationGroupTables', 'protocolVersion', 'syncEpoch'],
     limit: 1000
   });
   if (rows == null) {
@@ -3599,7 +3599,7 @@ function active_jobs_for_client(clientName: string): array<json> {
       status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
     },
     orderBy: { field: 'updatedAt', dir: 'desc' },
-    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId', 'protocolVersion', 'syncEpoch'],
+    fields: ['id', 'clientName', 'sourceClientName', 'subscriberClientName', 'table', 'direction', 'publisherServer', 'publisherDatabase', 'publisherUseWindowsAuth', 'publisherUser', 'publisherPassword', 'status', 'progress', 'rowCount', 'snapshotBytes', 'snapshotCreatedAt', 'snapshotId', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'message', 'error', 'clientUserId', 'ownerUserId', 'batchId', 'operationGroupId', 'operationGroupTables', 'protocolVersion', 'syncEpoch'],
     limit: 250
   });
   if (rows == null) {
@@ -13727,7 +13727,7 @@ function jobs_progress(jobId: string, status: string = 'running', progress: int,
   return { job: public_job_payload(nextJob) };
 }
 
-function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed sync.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null, rejectedRowCount: int? = null, rejectionSummary: string? = null, token: string? = null, conflictKind: string = ''): map<json> {
+function jobs_complete(jobId: string, status: string = 'completed', progress: int = 100, message: string = 'Completed sync.', rowCount: int = 0, snapshotId: string? = null, snapshotCreatedAt: string? = null, snapshotBytes: int? = null, rejectedRowCount: int? = null, rejectionSummary: string? = null, token: string? = null, conflictKind: string = '', ackOperationGroupId: string = '', operationGroupResults: array<json>? = null): map<json> {
   const job = find_job_by_id(jobId);
   if (job == null) {
     return raw_json_error(404, 'job not found');
@@ -13737,6 +13737,62 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   }
   if (sync_job_status_is_terminal(string.from(job.status))) {
     return { job: public_job_payload(job) };
+  }
+
+  const storedOperationGroupId = string.from(job.operationGroupId ?? '').trim();
+  const completingOperationGroup = status.trim().toLowerCase() == 'completed' &&
+    string.from(job.direction).trim() == 'download' &&
+    storedOperationGroupId.length != 0;
+  let validatedOperationGroupResults = [];
+  if (completingOperationGroup) {
+    const expectedOperationGroupTables = job.operationGroupTables ?? [];
+    const suppliedOperationGroupResults = operationGroupResults ?? [];
+    let suppliedOperationGroupTables = [];
+    for (const result of suppliedOperationGroupResults) {
+      const resultTable = string.from(result.table ?? '').trim();
+      if (resultTable.length == 0 || string_array_contains(suppliedOperationGroupTables, resultTable)) {
+        return raw_json_error(409, 'operation group acknowledgement contains an empty or duplicate table');
+      }
+      suppliedOperationGroupTables = suppliedOperationGroupTables.concat([resultTable]);
+    }
+    if (ackOperationGroupId.trim() != storedOperationGroupId ||
+        expectedOperationGroupTables.length < 2 ||
+        suppliedOperationGroupTables.length != expectedOperationGroupTables.length) {
+      return raw_json_error(409, 'operation group acknowledgement is missing its complete manifest');
+    }
+    for (const expectedTable of expectedOperationGroupTables) {
+      if (!string_array_contains(suppliedOperationGroupTables, string.from(expectedTable))) {
+        return raw_json_error(409, 'operation group acknowledgement does not match the durable manifest');
+      }
+    }
+    const durableOperationGroupJobs = db.selectMany(SyncJob, {
+      where: {
+        ownerUserId: job.ownerUserId,
+        clientName: job.clientName,
+        subscriberClientName: job.subscriberClientName,
+        operationGroupId: storedOperationGroupId,
+        direction: 'download'
+      },
+      orderBy: { field: 'table', dir: 'asc' },
+      fields: ['table'],
+      limit: 100
+    });
+    let durableOperationGroupTables = [];
+    for (const groupJob of durableOperationGroupJobs) {
+      const groupTable = string.from(groupJob.table).trim();
+      if (!string_array_contains(durableOperationGroupTables, groupTable)) {
+        durableOperationGroupTables = durableOperationGroupTables.concat([groupTable]);
+      }
+    }
+    if (durableOperationGroupTables.length != expectedOperationGroupTables.length) {
+      return raw_json_error(409, 'operation group durable jobs do not match the manifest');
+    }
+    for (const expectedTable of expectedOperationGroupTables) {
+      if (!string_array_contains(durableOperationGroupTables, string.from(expectedTable))) {
+        return raw_json_error(409, 'operation group durable jobs do not match the manifest');
+      }
+    }
+    validatedOperationGroupResults = suppliedOperationGroupResults;
   }
 
   const automaticNumberFullUnionRetry =
@@ -13756,6 +13812,15 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   if (snapshotBytes != null && snapshotBytes >= 0) {
     nextSnapshotBytes = snapshotBytes;
   }
+  let completedRowCount = rowCount;
+  if (completingOperationGroup) {
+    for (const result of validatedOperationGroupResults) {
+      if (string.from(result.table).trim() == string.from(job.table).trim()) {
+        completedRowCount = int.from(result.rowCount ?? 0);
+        nextSnapshotBytes = int.from(result.snapshotBytes ?? 0);
+      }
+    }
+  }
   const updated = db.update(SyncJob, { id: jobId }, {
     clientName: job.clientName,
     sourceClientName: job.sourceClientName,
@@ -13769,7 +13834,7 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     publisherPassword: job.publisherPassword,
     status,
     progress,
-    rowCount,
+    rowCount: completedRowCount,
     snapshotBytes: nextSnapshotBytes,
     snapshotCreatedAt: nextSnapshotCreatedAt,
     snapshotId: nextSnapshotId,
@@ -13788,30 +13853,34 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   if (updated != null) {
     nextJob = updated;
   }
-  const completedOperationGroupId = string.from(job.operationGroupId ?? '').trim();
-  if (status.trim().toLowerCase() == 'completed' &&
-      string.from(job.direction).trim() == 'download' &&
-      completedOperationGroupId.length != 0) {
+  const completedOperationGroupId = storedOperationGroupId;
+  if (completingOperationGroup) {
     // The client commits every staged table merge in one outer SQL
     // transaction before sending this acknowledgement. Close all download
     // rows for this client together so a lost response/restart cannot leave a
     // committed business operation waiting for an already-finished sibling.
-    db.updateMany(SyncJob, {
-      ownerUserId: job.ownerUserId,
-      clientName: job.clientName,
-      operationGroupId: completedOperationGroupId,
-      direction: 'download',
-      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
-    }, {
-      status: 'completed',
-      progress: 100,
-      completedAt,
-      message: 'Atomic Al-Ameen operation group applied successfully.',
-      error: null,
-      rejectedRowCount: 0,
-      rejectionSummary: null,
-      updatedAt: completedAt
-    });
+    for (const result of validatedOperationGroupResults) {
+      db.updateMany(SyncJob, {
+        ownerUserId: job.ownerUserId,
+        clientName: job.clientName,
+        subscriberClientName: job.subscriberClientName,
+        operationGroupId: completedOperationGroupId,
+        table: string.from(result.table),
+        direction: 'download',
+        status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+      }, {
+        status: 'completed',
+        progress: 100,
+        rowCount: int.from(result.rowCount ?? 0),
+        snapshotBytes: int.from(result.snapshotBytes ?? 0),
+        completedAt,
+        message: 'Atomic Al-Ameen operation group applied successfully.',
+        error: null,
+        rejectedRowCount: 0,
+        rejectionSummary: null,
+        updatedAt: completedAt
+      });
+    }
   }
   if (status.trim().toLowerCase() == 'failed' ||
       (rejectedRowCount != null && rejectedRowCount > 0)) {

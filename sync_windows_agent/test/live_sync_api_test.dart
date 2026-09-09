@@ -3327,6 +3327,58 @@ void main() {
     );
   });
 
+  test('completeJob sends the complete atomic operation manifest', () async {
+    final client = _ScriptedClient(
+      responseForRequest: (name, args, callIndex) {
+        expect(name, 'jobs_complete');
+        expect(args['ackOperationGroupId'], 'group-1');
+        expect(args['operationGroupResults'], [
+          {'table': 'db::bu000', 'rowCount': 12, 'snapshotBytes': 120},
+          {'table': 'db::ce000', 'rowCount': 15, 'snapshotBytes': 150},
+        ]);
+        return (
+          statusCode: 200,
+          body: {
+            'status': 'success',
+            'value': {
+              'job': {
+                'id': 'job-1',
+                'clientName': 'c1',
+                'sourceClientName': 'server-merge',
+                'subscriberClientName': 'c1',
+                'table': 'db::ce000',
+                'direction': 'download',
+                'status': 'completed',
+                'progress': 100,
+                'rowCount': 15,
+                'message': 'done',
+              },
+            },
+          },
+        );
+      },
+    );
+    final api = AgentControlPlaneClient(
+      client: client,
+      baseUrl: 'https://example.com/call',
+    );
+
+    await api.completeJob(
+      'job-1',
+      status: 'completed',
+      progress: 100,
+      message: 'done',
+      rowCount: 27,
+      operationGroupId: 'group-1',
+      operationGroupResults: const [
+        {'table': 'db::bu000', 'rowCount': 12, 'snapshotBytes': 120},
+        {'table': 'db::ce000', 'rowCount': 15, 'snapshotBytes': 150},
+      ],
+    );
+
+    expect(client.requests, hasLength(1));
+  });
+
   test(
     'fetchClientUpdateInfo returns null for 404 and parses a valid manifest',
     () async {

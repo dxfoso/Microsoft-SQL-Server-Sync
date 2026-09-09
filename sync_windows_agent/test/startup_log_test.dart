@@ -34,6 +34,13 @@ void main() {
         ),
         isFalse,
       );
+      expect(
+        shouldRetainAgentDiagnostic(
+          'sync.policy.disabled_change_detected',
+          AgentLogLevel.debug,
+        ),
+        isFalse,
+      );
     },
   );
 

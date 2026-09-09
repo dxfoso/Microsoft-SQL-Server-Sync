@@ -2052,11 +2052,17 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         );
         newlyEnabled = _applyRemoteTablePolicies(policies);
         for (final syncKey in changedTables) {
-          logStartupEvent(
-            newlyEnabled.contains(syncKey)
-                ? 'Automatically enabled $syncKey after detecting a local SQL change.'
-                : 'Detected a local change in $syncKey; the remote table policy kept it disabled.',
-          );
+          if (newlyEnabled.contains(syncKey)) {
+            logStartupEvent(
+              'Automatically enabled $syncKey after detecting a local SQL change.',
+            );
+          } else {
+            logAgentDiagnostic(
+              'sync.policy.disabled_change_detected',
+              level: AgentLogLevel.debug,
+              context: {'table': syncKey},
+            );
+          }
         }
       }
       if (newlyEnabled.isNotEmpty) {
@@ -8870,6 +8876,16 @@ ORDER BY s.name, t.name;
         0,
         (total, entry) => total + entry.snapshot.snapshotBytes,
       ),
+      operationGroupId: operationGroupId,
+      operationGroupResults: ordered
+          .map(
+            (entry) => <String, dynamic>{
+              'table': entry.job.table,
+              'rowCount': entry.snapshot.rows.length,
+              'snapshotBytes': entry.snapshot.snapshotBytes,
+            },
+          )
+          .toList(growable: false),
     );
     _applyRemoteJobState(
       completed,

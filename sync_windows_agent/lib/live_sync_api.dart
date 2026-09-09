@@ -996,6 +996,9 @@ class AgentControlPlaneClient {
     int? rejectedRowCount,
     String? rejectionSummary,
     String? conflictKind,
+    String? operationGroupId,
+    List<Map<String, dynamic>> operationGroupResults =
+        const <Map<String, dynamic>>[],
   }) async {
     final response = await _invokeFunction('jobs_complete', {
       'jobId': jobId,
@@ -1013,6 +1016,10 @@ class AgentControlPlaneClient {
         'rejectionSummary': rejectionSummary.trim(),
       if (conflictKind != null && conflictKind.trim().isNotEmpty)
         'conflictKind': conflictKind.trim(),
+      if (operationGroupId != null && operationGroupId.trim().isNotEmpty)
+        'ackOperationGroupId': operationGroupId.trim(),
+      if (operationGroupResults.isNotEmpty)
+        'operationGroupResults': operationGroupResults,
     }, 'completing job');
     return _parseJobPayload(response, 'job completion');
   }

@@ -279,7 +279,18 @@ function Get-WindowsAgentGitCommitHash {
     try {
         $commit = (& git -C $RepoRoot rev-parse --short=12 HEAD 2>$null).Trim()
         if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($commit)) {
-            $status = (& git -C $RepoRoot status --porcelain 2>$null)
+            # The binary identity describes only inputs that can change the
+            # Windows client. Unrelated web/editor changes in the shared
+            # repository must not create a false `-dirty` client release.
+            $clientInputs = @(
+                'sync_windows_agent',
+                'scripts/windows_agent_build.ps1',
+                'scripts/publish_windows_client_update.ps1',
+                'scripts/build_portable.ps1',
+                'update.ps1',
+                'sync_windows_agent_supervisor.ps1'
+            )
+            $status = (& git -C $RepoRoot status --porcelain -- @clientInputs 2>$null)
             if ($LASTEXITCODE -eq 0 -and @($status).Count -gt 0) {
                 return "$commit-dirty"
             }

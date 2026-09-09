@@ -16,6 +16,7 @@ const Set<String> _routineHighVolumeDebugEvents = <String>{
   'sqlcmd.started',
   'sqlcmd.completed',
   'sync.upload.chunk.completed',
+  'sync.policy.disabled_change_detected',
 };
 
 bool shouldRetainAgentDiagnostic(String event, AgentLogLevel level) =>
@@ -160,8 +161,8 @@ void logAgentDiagnostic(
       entry['message'] = safeMessage;
       if (safeStack != null) {
         entry['stackTrace'] =
-            safeStack.length > 4096
-                ? '${safeStack.substring(0, 4096)}…[truncated]'
+            safeStack.length > 1024
+                ? '${safeStack.substring(0, 1024)}…[truncated]'
                 : safeStack;
       }
       encoded = jsonEncode(entry);
