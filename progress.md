@@ -2,7 +2,7 @@
 
 ## Second isolated Sales collision verification (2026-09-09)
 
-Overall: **98% complete. The simplified atomic-manifest server fix remains healthy at commit `0066b9097544fe31a66f0157fa987b9456e058af`. Both eligible clients installed `1.0.334+338`; the heterogeneous-schema error is gone, but the prior failed release had removed one durable `bi000` stage and exposed INC-734's stale in-memory retry. Client `1.0.335+339` now discards only the rolled-back deferred manifest so the next heartbeat reconstructs missing stages from immutable download caches. Verification passes: 607 repository tests, 255 Flutter tests, the complete 36-scenario disposable SQL Server suite, and Standard 9/9 in 587 seconds. Publication, installation, and automatic completion of the retained `_SyncLab` group remain. Automatic scheduling is paused and Velvet Home is disabled/untouched; no user action is required.**
+Overall: **98% complete. The simplified atomic-manifest server fix remains healthy at commit `0066b9097544fe31a66f0157fa987b9456e058af`. Both eligible clients installed `1.0.335+339`; stale-stage recovery worked and exposed INC-741's final unbalanced table-local scratch object. Client `1.0.336+340` now gives every atomic table batch balanced create/use/drop ownership without adding another subsystem. Verification passes: 607 repository tests, 255 Flutter tests, the complete 36-scenario disposable SQL Server suite, and Standard 9/9 in 652 seconds. Publication, installation, and automatic completion of the retained `_SyncLab` group remain. Automatic scheduling is paused and Velvet Home is disabled/untouched; no user action is required.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -18,7 +18,8 @@ Overall: **98% complete. The simplified atomic-manifest server fix remains healt
 | Publish/deploy client `1.0.332+336` and exact server commit | Done: exact server commit is healthy and both eligible clients are current | 100% |
 | Fix SQL Server GUID aggregation in the operation boundary | Done: client `1.0.333+337` is published, startup-verified, and current on both eligible clients; every grouped upload completed | 100% |
 | Recompile heterogeneous table merges without weakening atomicity | Done in `1.0.334+338`: the invalid-column error is absent on both real lab clients | 100% |
-| Recover a durable stage removed by an older failed attempt | Implemented and fully verified in `1.0.335+339`: discard only stale in-memory group state, then rebuild from cached immutable downloads | 90% |
+| Recover a durable stage removed by an older failed attempt | Done in `1.0.335+339`: both clients automatically rebuilt the missing stage from cached immutable downloads | 100% |
+| Balance every table-local atomic scratch object | Implemented and fully verified in `1.0.336+340`: each table drops its protected-key and incoming-key scratch sets before the next table compiles | 90% |
 | Prove both Sales exist and all ten mapped tables converge | Controlled uploads completed; grouped downloads are retained at their all-or-nothing apply boundary pending the corrected client | 70% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 

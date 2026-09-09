@@ -599,6 +599,14 @@ void main() {
         'source.[Code] COLLATE DATABASE_DEFAULT',
       ),
     );
+    expect(
+      RegExp(r'CREATE TABLE #sqlsync_protected_keys').allMatches(sql).length,
+      RegExp(r'DROP TABLE #sqlsync_protected_keys').allMatches(sql).length,
+    );
+    expect(
+      sql.indexOf('DROP TABLE #sqlsync_protected_keys'),
+      lessThan(sql.indexOf('DROP TABLE #sqlsync_incoming_keys')),
+    );
   });
 
   test('complete snapshot never deletes a conflicting old identity', () {

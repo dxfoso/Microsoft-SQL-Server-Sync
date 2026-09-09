@@ -759,6 +759,7 @@ String _buildPostUploadProtectionStatements({
     ON $protectedToStageJoin;
   SET @SqlSyncProtectedUpsertRows = @@ROWCOUNT;
   $uniqueConflictProtection
+  DROP TABLE #sqlsync_protected_keys;
   DROP TABLE #sqlsync_incoming_keys;''';
 }
 
