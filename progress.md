@@ -2,7 +2,7 @@
 
 ## Second isolated Sales collision verification (2026-09-09)
 
-Overall: **98% complete. The simplified atomic-manifest server fix remains healthy at commit `0066b9097544fe31a66f0157fa987b9456e058af`. Both eligible clients installed `1.0.336+340`; the complete atomic group then committed but correctly remained unacknowledged because post-commit verification compared derived `er000.ParentNumber` with its stale transported copy. INC-745 fixes that mismatch with one effective-row normalization based on permanent `ParentGUID`, without adding another conflict subsystem. Client `1.0.337+341` passes 608 repository tests, 256 Flutter tests, the complete 36-scenario disposable SQL Server suite, and Standard 9/9 in 638 seconds. Publication, installation, and automatic completion of the retained `_SyncLab` group remain. Automatic scheduling is paused and Velvet Home is disabled/untouched; no user action is required.**
+Overall: **100% complete for the simplified controlled collision run. The server remains healthy at commit `0066b9097544fe31a66f0157fa987b9456e058af`; client `1.0.337+341` is published, portable-startup verified, and current on both eligible clients. INC-745 resolves derived `er000.ParentNumber` through permanent `ParentGUID` before comparison without adding another conflict subsystem. The retained operation was resumed through the control plane and both nine-table atomic groups completed automatically. All ten mapped tables now report `Completed`, no pending local changes, identical v3 row counts/checksums on both clients, `bu000=1,932`, and `ce000=2,273`. Verification passes: 608 repository tests, 256 Flutter tests, all 36 disposable SQL scenarios, and Standard 9/9 in 638 seconds. Global automatic scheduling remains intentionally paused and Velvet Home remains disabled/untouched; no user action is required for this test.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -20,11 +20,11 @@ Overall: **98% complete. The simplified atomic-manifest server fix remains healt
 | Recompile heterogeneous table merges without weakening atomicity | Done in `1.0.334+338`: the invalid-column error is absent on both real lab clients | 100% |
 | Recover a durable stage removed by an older failed attempt | Done in `1.0.335+339`: both clients automatically rebuilt the missing stage from cached immutable downloads | 100% |
 | Balance every table-local atomic scratch object | Done and live-proven in `1.0.336+340`: the group passed every SQL merge and reached post-commit verification | 100% |
-| Compare derived Al-Ameen relation numbers by permanent parent identity | Implemented and fully verified in `1.0.337+341`: `er000.ParentNumber` is derived from target `bu000` by `ParentGUID` before hashing | 90% |
-| Prove both Sales exist and all ten mapped tables converge | Controlled uploads remain retained; the committed group stayed unacknowledged after the safe verification mismatch and will retry with the corrected client | 75% |
-| Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
+| Compare derived Al-Ameen relation numbers by permanent parent identity | Done in `1.0.337+341`: `er000.ParentNumber` is derived from target `bu000` by `ParentGUID` before hashing | 100% |
+| Prove both Sales exist and all ten mapped tables converge | Done: both groups completed; every mapped row count and v3 checksum is identical, including `bu000=1,932` and `ce000=2,273` | 100% |
+| Resume automatic scheduling | Intentionally not requested for this controlled test; global scheduling remains paused while manual Sync All remains available | 100% |
 
-Current safety state: this is an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remains disabled and ignored. Global automatic sync is paused. Synchronization will not resume until the exact corrected server/client repairs both copies to 1,932 `bu000` rows and 2,273 `ce000` rows and all ten physical fingerprints match.
+Current safety state: this was an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remained disabled and ignored. Both copies now contain 1,932 `bu000` rows and 2,273 `ce000` rows, and all ten physical fingerprints match. Global automatic sync remains paused by administrator choice; manual Sync All continues to work without enabling the scheduler.
 
 ## Automatic Al-Ameen synchronization (2026-09-07)
 
