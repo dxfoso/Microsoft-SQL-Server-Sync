@@ -247,6 +247,21 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("'Run Remote Self-Test'", dashboard)
         self.assertIn("'View Support Report'", dashboard)
 
+        diagnostics_body = agent_page.split(
+            "Future<String> _buildDiagnosticsPayload({", 1
+        )[1].split("List<Map<String, dynamic>> _buildDiagnosticsSelfTests", 1)[0]
+        retained_log_snapshot = diagnostics_body.index(
+            "final startupLogTail = _readStartupLogTail();"
+        )
+        fingerprint_refresh = diagnostics_body.index(
+            "await _refreshSelectedTableFingerprints();"
+        )
+        change_tracking_diagnostics = diagnostics_body.index(
+            "await _buildChangeTrackingDiagnosticsForUpload();"
+        )
+        self.assertLess(retained_log_snapshot, fingerprint_refresh)
+        self.assertLess(retained_log_snapshot, change_tracking_diagnostics)
+
     def test_change_tracking_delta_query_avoids_reserved_current_alias(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
 

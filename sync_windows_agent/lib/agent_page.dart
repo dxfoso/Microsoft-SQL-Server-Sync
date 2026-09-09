@@ -6809,6 +6809,10 @@ ORDER BY s.name, t.name;
   Future<String> _buildDiagnosticsPayload({
     bool refreshFingerprints = true,
   }) async {
+    // Snapshot the retained semantic history before diagnostics starts any SQL
+    // discovery. Fingerprint enrichment can emit enough debug entries to
+    // rotate the bounded log and must not erase the sync event being diagnosed.
+    final startupLogTail = _readStartupLogTail();
     // Diagnostics are used for remote recovery decisions. Always base them
     // on a fresh physical SQL fingerprint when enrichment is requested. The
     // initial log response intentionally uses the latest cached physical
@@ -6885,7 +6889,6 @@ ORDER BY s.name, t.name;
         .toList(growable: false);
 
     final changeTracking = await _buildChangeTrackingDiagnosticsForUpload();
-    final startupLogTail = _readStartupLogTail();
     final updateLogTail = _readUpdateLogTail();
     final supportTimeline = _buildDiagnosticsTimeline(
       startupLogTail,
