@@ -2688,6 +2688,11 @@ class SyncContractsTests(unittest.TestCase):
             marker_loop,
         )
         self.assertNotIn("durableWinnerOperationIds", marker_loop)
+        self.assertIn("multi-writer durable relay decision", download)
+        self.assertIn("candidateMarkerCount", download)
+        self.assertIn("resolvedDurableWinnerCount", download)
+        self.assertIn("matchedDurableWinnerCount", download)
+        self.assertNotIn("acceptedRow", download.split("log.info('multi-writer durable relay decision'", 1)[1].split(");", 1)[0])
 
     def test_multi_writer_upload_resolves_each_candidate_register_exactly(self):
         control_plane = read_text("business/control_plane.tru")

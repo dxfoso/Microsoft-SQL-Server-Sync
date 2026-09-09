@@ -11972,6 +11972,8 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
   }
   let acceptedOperationIds = candidateAcceptedOperationIds;
   let acceptedOperations = candidateAcceptedOperations;
+  let resolvedDurableWinnerCount = 0;
+  let matchedDurableWinnerCount = 0;
   if (winnerPolicyApplied && candidateAcceptedOperationIds.length > 0) {
     // Resolve every retained marker independently. The runtime's bounded
     // `in` query can return an empty set for a JSON-derived string array even
@@ -12008,11 +12010,15 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
           durableOperationId
         );
       }
-      if (durableWinner == null ||
-          operationId.length == 0 ||
+      if (durableWinner == null) {
+        continue;
+      }
+      resolvedDurableWinnerCount += 1;
+      if (operationId.length == 0 ||
           string.from(durableWinner.operationId).trim() != durableOperationId) {
         continue;
       }
+      matchedDurableWinnerCount += 1;
       const authoritativeModifiedAtUtc = string.from(
         durableWinner.modifiedAtUtc ?? candidateOperation.authoritativeModifiedAtUtc ?? ''
       ).trim();
@@ -12031,6 +12037,17 @@ function jobs_multi_writer_download(jobId: string, batchId: string, cursor: stri
         automaticNumber: candidateOperation.automaticNumber
       }]);
     }
+  }
+  if (winnerPolicyApplied && candidateAcceptedOperationIds.length > 0) {
+    log.info('multi-writer durable relay decision', {
+      batchId: batch.id,
+      table: batch.table,
+      targetClientName: job.clientName,
+      candidateMarkerCount: candidateAcceptedOperationIds.length,
+      resolvedDurableWinnerCount,
+      matchedDurableWinnerCount,
+      acceptedOperationCount: acceptedOperationIds.length
+    });
   }
   // This phase exists only to initialize the owner-wide maximum. Applying its
   // ordinary union rows could conflict with the deliberately staged voucher
