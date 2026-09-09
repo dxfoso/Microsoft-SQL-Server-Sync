@@ -689,9 +689,7 @@ class AttentionPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final failed = state.jobs
-        .where((j) => j.status.toLowerCase() == 'failed')
-        .toList(growable: false);
+    final failed = currentFailedJobs(state.jobs);
     final gate = state.syncGate;
     final blockers = gate.issues
         .where((i) => i.needsInput)

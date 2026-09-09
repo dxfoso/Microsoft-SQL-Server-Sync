@@ -295,6 +295,7 @@ class _ClientsPageState extends State<ClientsPage> {
   _ClientDetailView _detailView = _ClientDetailView.tables;
   _TableSortField _tableSortField = _TableSortField.readiness;
   bool _tableSortAscending = true;
+  bool _showPausedTables = false;
   String? _resolvingTable;
   String? _selectedTable;
   String? _selectedSyncKey;
@@ -1082,7 +1083,7 @@ class _ClientsPageState extends State<ClientsPage> {
             const SizedBox(width: 12),
             _toolbarMetric(
               Icons.table_view_outlined,
-              '${agent.tables.length} tables',
+              '${agent.syncScopeTables.length} synced tables',
             ),
             _toolbarMetric(
               Icons.arrow_upward_rounded,
@@ -1122,7 +1123,7 @@ class _ClientsPageState extends State<ClientsPage> {
   bool get _hasAttentionItems {
     final state = _state;
     if (state == null) return false;
-    return state.jobs.any((j) => j.status.toLowerCase() == 'failed') ||
+    return currentFailedJobs(state.jobs).isNotEmpty ||
         state.syncGate.decisionCount > 0 ||
         state.syncGate.resolvingCount > 0;
   }
@@ -1401,7 +1402,10 @@ class _ClientsPageState extends State<ClientsPage> {
                             ? '—'
                             : agent.database.trim(),
                       ),
-                      _clientMetaChip('tables', '${agent.tables.length}'),
+                      _clientMetaChip(
+                        'synced tables',
+                        '${agent.syncScopeTables.length}',
+                      ),
                       _clientMetaChip(
                         'heartbeat',
                         _formatTimestamp(agent.lastHeartbeat),
@@ -1420,7 +1424,7 @@ class _ClientsPageState extends State<ClientsPage> {
 
   Widget _buildClientCardDetail(AdminAgent agent) {
     final t = AppTokens.of(context);
-    final tables = agent.tables;
+    final tables = agent.syncScopeTables;
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -1975,7 +1979,9 @@ class _ClientsPageState extends State<ClientsPage> {
             right.database.toLowerCase(),
           );
         case _ClientSortField.tables:
-          comparison = left.tables.length.compareTo(right.tables.length);
+          comparison = left.syncScopeTables.length.compareTo(
+            right.syncScopeTables.length,
+          );
         case _ClientSortField.lastSync:
           comparison = _timestamp(
             _latestClientSync(left),
@@ -2052,7 +2058,7 @@ class _ClientsPageState extends State<ClientsPage> {
             overflow: TextOverflow.ellipsis,
           ),
         ),
-        DataCell(Text('${agent.tables.length}')),
+        DataCell(Text('${agent.syncScopeTables.length}')),
         DataCell(_buildLastResultCell(agent)),
         DataCell(_buildSyncTotalsCell(agent)),
         DataCell(_buildLastActivityCell(agent)),
@@ -3042,7 +3048,7 @@ class _ClientsPageState extends State<ClientsPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildCompactDetailViewSelector(
-                tableCount: agent.tables.length,
+                tableCount: agent.syncScopeTables.length,
                 syncCount:
                     _groupSyncLogBatches(
                       _groupSyncLogOperations(
@@ -3063,7 +3069,7 @@ class _ClientsPageState extends State<ClientsPage> {
             SizedBox(
               width: 224,
               child: _buildDetailNavigation(
-                tableCount: agent.tables.length,
+                tableCount: agent.syncScopeTables.length,
                 issueCount: issueCount,
                 syncCount:
                     _groupSyncLogBatches(
@@ -3355,7 +3361,10 @@ class _ClientsPageState extends State<ClientsPage> {
       jobsByTable.putIfAbsent(job.table, () => <AdminJob>[]).add(job);
     }
     final query = _tableFilter.toLowerCase();
-    final tables = agent.tables
+    final pausedTableCount = agent.pausedDiscoveredTableCount;
+    final availableTables =
+        _showPausedTables ? agent.tables : agent.syncScopeTables;
+    final tables = availableTables
       .where(
         (table) =>
             query.isEmpty ||
@@ -3381,7 +3390,10 @@ class _ClientsPageState extends State<ClientsPage> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Every table must be ready before manual or automatic sync can start.',
+          pausedTableCount == 0
+              ? 'Only tables in the current synchronization scope are shown.'
+              : 'Showing ${agent.syncScopeTables.length} synchronized tables. '
+                  '$pausedTableCount other discovered SQL tables are paused.',
           style: TextStyle(color: AppTokens.of(context).muted, fontSize: 12),
         ),
         if (needsInputCount > 0) ...[
@@ -3448,8 +3460,17 @@ class _ClientsPageState extends State<ClientsPage> {
                 children: [
                   filter,
                   const SizedBox(height: 6),
+                  if (pausedTableCount > 0)
+                    FilterChip(
+                      label: Text('Show $pausedTableCount paused tables'),
+                      selected: _showPausedTables,
+                      onSelected:
+                          (selected) =>
+                              setState(() => _showPausedTables = selected),
+                    ),
+                  if (pausedTableCount > 0) const SizedBox(height: 6),
                   Text(
-                    '${tables.length} of ${agent.tables.length} tables',
+                    '${tables.length} of ${availableTables.length} shown tables',
                     style: TextStyle(
                       color: AppTokens.of(context).muted,
                       fontSize: 12,
@@ -3461,9 +3482,19 @@ class _ClientsPageState extends State<ClientsPage> {
             return Row(
               children: [
                 SizedBox(width: 320, child: filter),
+                if (pausedTableCount > 0) ...[
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    label: Text('Show $pausedTableCount paused'),
+                    selected: _showPausedTables,
+                    onSelected:
+                        (selected) =>
+                            setState(() => _showPausedTables = selected),
+                  ),
+                ],
                 const Spacer(),
                 Text(
-                  '${tables.length} of ${agent.tables.length} tables',
+                  '${tables.length} of ${availableTables.length} shown tables',
                   style: TextStyle(
                     color: AppTokens.of(context).muted,
                     fontSize: 12,

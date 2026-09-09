@@ -42,18 +42,18 @@ class AuthenticatedUser {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'username': username,
-        'email': email,
-        'name': name,
-        'role': role,
-        'ownerUserId': ownerUserId,
-        'ownerUsername': ownerUsername,
-        'ownerEmail': ownerEmail,
-        'ownerName': ownerName,
-        'createdByUserId': createdByUserId,
-        'createdAt': createdAt,
-      };
+    'id': id,
+    'username': username,
+    'email': email,
+    'name': name,
+    'role': role,
+    'ownerUserId': ownerUserId,
+    'ownerUsername': ownerUsername,
+    'ownerEmail': ownerEmail,
+    'ownerName': ownerName,
+    'createdByUserId': createdByUserId,
+    'createdAt': createdAt,
+  };
 
   bool get isAdmin => role == 'admin';
   bool get isOwner => role == 'owner';
@@ -94,14 +94,14 @@ class AdminLiveState {
       syncGate: AdminSyncGate.fromJson(
         Map<String, dynamic>.from(json['syncGate'] as Map? ?? const {}),
       ),
-      syncAllOperations:
-          (json['syncAllOperations'] as List<dynamic>? ?? const [])
-              .map(
-                (item) => AdminSyncAllOperation.fromJson(
-                  Map<String, dynamic>.from(item as Map),
-                ),
-              )
-              .toList(growable: false),
+      syncAllOperations: (json['syncAllOperations'] as List<dynamic>? ??
+              const [])
+          .map(
+            (item) => AdminSyncAllOperation.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList(growable: false),
       agents: (json['agents'] as List<dynamic>? ?? const [])
           .map(
             (item) =>
@@ -163,9 +163,10 @@ class AdminSyncAllOperation {
     }
     final start = DateTime.tryParse(startedAt);
     if (start == null) return null;
-    final end = isRunning
-        ? (now ?? DateTime.now().toUtc())
-        : DateTime.tryParse(completedAt);
+    final end =
+        isRunning
+            ? (now ?? DateTime.now().toUtc())
+            : DateTime.tryParse(completedAt);
     if (end == null || end.isBefore(start)) return null;
     return end.difference(start);
   }
@@ -234,11 +235,14 @@ class AdminSyncGate {
       blocked: json['blocked'] as bool? ?? false,
       status: json['status'] as String? ?? 'ready',
       issueCount: (json['issueCount'] as num? ?? 0).round(),
-      decisionCount: (json['decisionCount'] as num?)?.round() ??
+      decisionCount:
+          (json['decisionCount'] as num?)?.round() ??
           issues.where((issue) => issue.needsInput).length,
-      resolvingCount: (json['resolvingCount'] as num?)?.round() ??
+      resolvingCount:
+          (json['resolvingCount'] as num?)?.round() ??
           issues.where((issue) => issue.resolving).length,
-      message: json['message'] as String? ??
+      message:
+          json['message'] as String? ??
           'Every table is ready for synchronization.',
       issues: issues,
     );
@@ -288,10 +292,10 @@ class AdminTableSyncIssue {
       clientName: json['clientName'] as String? ?? '',
       action: json['action'] as String? ?? '',
       sourceClientName: json['sourceClientName'] as String? ?? '',
-      targetClientNames:
-          (json['targetClientNames'] as List<dynamic>? ?? const [])
-              .map((item) => item.toString())
-              .toList(growable: false),
+      targetClientNames: (json['targetClientNames'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
       detectedAt: json['detectedAt']?.toString() ?? '',
       updatedAt: json['updatedAt']?.toString() ?? '',
       resolvedAt: json['resolvedAt']?.toString() ?? '',
@@ -321,10 +325,10 @@ class AdminTableComparisonRequest {
       clientNames: (json['clientNames'] as List<dynamic>? ?? const [])
           .map((item) => item.toString())
           .toList(growable: false),
-      skippedOfflineClients:
-          (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
-              .map((item) => item.toString())
-              .toList(growable: false),
+      skippedOfflineClients: (json['skippedOfflineClients'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
       jobs: (json['jobs'] as List<dynamic>? ?? const [])
           .map(
             (item) => AdminJob.fromJson(Map<String, dynamic>.from(item as Map)),
@@ -475,9 +479,10 @@ class AdminFingerprintAudit {
   Duration? duration({DateTime? now}) {
     final start = DateTime.tryParse(cycleStartedAt);
     if (start == null) return null;
-    final end = isActive
-        ? (now ?? DateTime.now().toUtc())
-        : DateTime.tryParse(lastCompletedAt);
+    final end =
+        isActive
+            ? (now ?? DateTime.now().toUtc())
+            : DateTime.tryParse(lastCompletedAt);
     if (end == null || end.isBefore(start)) return null;
     return end.difference(start);
   }
@@ -581,10 +586,25 @@ class AdminAgent {
   final List<AdminTableState> tables;
   final AdminFingerprintAudit fingerprintAudit;
 
+  /// Tables currently enrolled in synchronization, plus any non-paused table
+  /// that still needs attention. The complete [tables] list remains the
+  /// discovered SQL schema inventory for diagnostics and future enrollment.
+  List<AdminTableState> get syncScopeTables => tables
+      .where((table) => table.enabled || table.status.toLowerCase() != 'paused')
+      .toList(growable: false);
+
+  int get pausedDiscoveredTableCount =>
+      tables
+          .where(
+            (table) => !table.enabled && table.status.toLowerCase() == 'paused',
+          )
+          .length;
+
   factory AdminAgent.fromJson(Map<String, dynamic> json) {
-    final status = json['status'] is Map
-        ? Map<String, dynamic>.from(json['status'] as Map)
-        : const <String, dynamic>{};
+    final status =
+        json['status'] is Map
+            ? Map<String, dynamic>.from(json['status'] as Map)
+            : const <String, dynamic>{};
     return AdminAgent(
       clientName: json['clientName'] as String? ?? '',
       clientUserId: json['clientUserId'] as String?,
@@ -617,16 +637,18 @@ class AdminAgent {
       runtimeReady: status['ready'] as bool? ?? false,
       heartbeatAgeSeconds: (status['heartbeatAgeSeconds'] as num?)?.round(),
       selectedTable: json['selectedTable'] as String?,
-      diagnostics: json['diagnostics'] is Map
-          ? AdminAgentDiagnostics.fromJson(
-              Map<String, dynamic>.from(json['diagnostics'] as Map),
-            )
-          : const AdminAgentDiagnostics(),
-      clientUpdate: json['clientUpdate'] is Map
-          ? AdminAgentClientUpdate.fromJson(
-              Map<String, dynamic>.from(json['clientUpdate'] as Map),
-            )
-          : const AdminAgentClientUpdate(),
+      diagnostics:
+          json['diagnostics'] is Map
+              ? AdminAgentDiagnostics.fromJson(
+                Map<String, dynamic>.from(json['diagnostics'] as Map),
+              )
+              : const AdminAgentDiagnostics(),
+      clientUpdate:
+          json['clientUpdate'] is Map
+              ? AdminAgentClientUpdate.fromJson(
+                Map<String, dynamic>.from(json['clientUpdate'] as Map),
+              )
+              : const AdminAgentClientUpdate(),
       tables: (json['tables'] as List<dynamic>? ?? const [])
           .map(
             (item) => AdminTableState.fromJson(
@@ -634,21 +656,23 @@ class AdminAgent {
             ),
           )
           .toList(growable: false),
-      fingerprintAudit: json['fingerprintAudit'] is List &&
-              (json['fingerprintAudit'] as List).isNotEmpty &&
-              (json['fingerprintAudit'] as List).first is Map
-          ? AdminFingerprintAudit.fromJson(
-              Map<String, dynamic>.from(
-                (json['fingerprintAudit'] as List).first as Map,
-              ),
-            )
-          : const AdminFingerprintAudit(),
+      fingerprintAudit:
+          json['fingerprintAudit'] is List &&
+                  (json['fingerprintAudit'] as List).isNotEmpty &&
+                  (json['fingerprintAudit'] as List).first is Map
+              ? AdminFingerprintAudit.fromJson(
+                Map<String, dynamic>.from(
+                  (json['fingerprintAudit'] as List).first as Map,
+                ),
+              )
+              : const AdminFingerprintAudit(),
     );
   }
 
-  Duration? get lastSyncDuration => lastSyncDurationMs == null
-      ? null
-      : Duration(milliseconds: lastSyncDurationMs!);
+  Duration? get lastSyncDuration =>
+      lastSyncDurationMs == null
+          ? null
+          : Duration(milliseconds: lastSyncDurationMs!);
 }
 
 class AdminAutomaticNumberIncident {
@@ -691,9 +715,10 @@ class AdminAutomaticNumberIncident {
   final String updatedAt;
 
   factory AdminAutomaticNumberIncident.fromJson(Map<String, dynamic> json) {
-    Map<String, dynamic> object(String key) => json[key] is Map
-        ? Map<String, dynamic>.from(json[key] as Map)
-        : const <String, dynamic>{};
+    Map<String, dynamic> object(String key) =>
+        json[key] is Map
+            ? Map<String, dynamic>.from(json[key] as Map)
+            : const <String, dynamic>{};
     return AdminAutomaticNumberIncident(
       id: json['id']?.toString() ?? '',
       clientName: json['clientName']?.toString() ?? '',
@@ -840,18 +865,19 @@ class AdminBulkSyncResult {
     return AdminBulkSyncResult(
       queuedJobCount: (json['queuedJobCount'] as num? ?? 0).round(),
       queuedClientCount: (json['queuedClientCount'] as num? ?? 0).round(),
-      skippedOfflineClientCount: (json['skippedOfflineClientCount'] as num? ??
-              (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
-                  .length)
-          .round(),
-      skippedOfflineClients:
-          (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
-              .map((item) => item.toString())
-              .toList(growable: false),
-      skippedBusyTables:
-          (json['skippedBusyTables'] as List<dynamic>? ?? const [])
-              .map((item) => item.toString())
-              .toList(growable: false),
+      skippedOfflineClientCount:
+          (json['skippedOfflineClientCount'] as num? ??
+                  (json['skippedOfflineClients'] as List<dynamic>? ?? const [])
+                      .length)
+              .round(),
+      skippedOfflineClients: (json['skippedOfflineClients'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+      skippedBusyTables: (json['skippedBusyTables'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
     );
   }
 }
@@ -879,10 +905,10 @@ class AdminBulkDiagnosticsRequestResult {
       requestedAt: json['requestedAt'] as String? ?? '',
       requestedByUserId: json['requestedByUserId'] as String?,
       requestedClientCount: (json['requestedClientCount'] as num? ?? 0).round(),
-      requestedClientNames:
-          (json['requestedClientNames'] as List<dynamic>? ?? const [])
-              .map((item) => item.toString())
-              .toList(growable: false),
+      requestedClientNames: (json['requestedClientNames'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
     );
   }
 }
@@ -910,10 +936,10 @@ class AdminBulkClientUpdateRequestResult {
       requestedAt: json['requestedAt'] as String? ?? '',
       requestedByUserId: json['requestedByUserId'] as String?,
       requestedClientCount: (json['requestedClientCount'] as num? ?? 0).round(),
-      requestedClientNames:
-          (json['requestedClientNames'] as List<dynamic>? ?? const [])
-              .map((item) => item.toString())
-              .toList(growable: false),
+      requestedClientNames: (json['requestedClientNames'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
     );
   }
 }
@@ -944,10 +970,10 @@ class AdminBulkWindowActionRequestResult {
       requestedAt: json['requestedAt'] as String? ?? '',
       requestedByUserId: json['requestedByUserId'] as String?,
       requestedClientCount: (json['requestedClientCount'] as num? ?? 0).round(),
-      requestedClientNames:
-          (json['requestedClientNames'] as List<dynamic>? ?? const [])
-              .map((item) => item.toString())
-              .toList(growable: false),
+      requestedClientNames: (json['requestedClientNames'] as List<dynamic>? ??
+              const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
     );
   }
 }
@@ -1129,6 +1155,36 @@ class AdminJob {
     if (end == null || end.isBefore(start)) return null;
     return end.difference(start);
   }
+}
+
+/// A failed job is current only until the same client/table/direction later
+/// completes. Superseded failures stay in the sync log for audit, but no
+/// longer appear as an operational problem requiring attention.
+List<AdminJob> currentFailedJobs(Iterable<AdminJob> jobs) {
+  final all = jobs.toList(growable: false);
+  return all
+      .where((failed) {
+        if (failed.status.toLowerCase() != 'failed') return false;
+        final failedAt =
+            DateTime.tryParse(failed.updatedAt) ??
+            DateTime.tryParse(failed.createdAt);
+        return !all.any((candidate) {
+          if (candidate.status.toLowerCase() != 'completed' ||
+              candidate.clientName != failed.clientName ||
+              candidate.table != failed.table ||
+              candidate.direction.toLowerCase() !=
+                  failed.direction.toLowerCase()) {
+            return false;
+          }
+          final completedAt =
+              DateTime.tryParse(candidate.updatedAt) ??
+              DateTime.tryParse(candidate.completedAt ?? '');
+          return failedAt != null &&
+              completedAt != null &&
+              completedAt.isAfter(failedAt);
+        });
+      })
+      .toList(growable: false);
 }
 
 String formatSyncDuration(Duration? duration) {

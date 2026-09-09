@@ -483,6 +483,24 @@ class SyncContractsTests(unittest.TestCase):
         self.assertIn("_latestClientSync(agent)", clients_page)
         self.assertIn("_showBulkActionsInLegacyDashboard => false", dashboard)
 
+    def test_clients_page_separates_current_scope_and_current_failures_from_history(self):
+        clients_page = read_text("frontend/lib/clients_page.dart")
+        dashboard = read_text("frontend/lib/dashboard_page.dart")
+        widgets = read_text("frontend/lib/dashboard_widgets.dart")
+        models = read_text("frontend/lib/models.dart")
+
+        self.assertIn("List<AdminTableState> get syncScopeTables", models)
+        self.assertIn("int get pausedDiscoveredTableCount", models)
+        self.assertIn("List<AdminJob> currentFailedJobs", models)
+        self.assertIn("completedAt.isAfter(failedAt)", models)
+        self.assertIn("currentFailedJobs(state.jobs)", widgets)
+        self.assertIn("currentFailedJobs(state.jobs)", dashboard)
+        self.assertIn("currentFailedJobs(state.jobs).isNotEmpty", clients_page)
+        self.assertIn("agent.syncScopeTables", clients_page)
+        self.assertIn("Show $pausedTableCount paused", clients_page)
+        self.assertIn("_showPausedTables ? agent.tables : agent.syncScopeTables", clients_page)
+        self.assertIn("other discovered SQL tables are paused", clients_page)
+
     def test_mobile_client_filter_is_compact_and_integrated_in_card_header(self):
         clients_page = read_text("frontend/lib/clients_page.dart")
         client_list = clients_page.split(

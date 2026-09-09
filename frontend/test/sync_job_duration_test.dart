@@ -4,13 +4,17 @@ import 'package:sync_admin_web/models.dart';
 AdminJob _job({
   required String status,
   required String createdAt,
+  String id = 'job-1',
+  String clientName = 'client-a',
+  String table = 'db::table',
+  String direction = 'download',
   String? updatedAt,
   String? completedAt,
 }) => AdminJob.fromJson({
-  'id': 'job-1',
-  'clientName': 'client-a',
-  'table': 'db::table',
-  'direction': 'download',
+  'id': id,
+  'clientName': clientName,
+  'table': table,
+  'direction': direction,
   'status': status,
   'createdAt': createdAt,
   'updatedAt': updatedAt ?? createdAt,
@@ -56,6 +60,61 @@ void main() {
       job.duration(now: DateTime.parse('2026-08-02T09:00:00Z')),
       const Duration(seconds: 12),
     );
+  });
+
+  test('a later successful retry supersedes a failed attention item', () {
+    final failed = _job(
+      id: 'failed',
+      status: 'failed',
+      createdAt: '2026-09-09T10:40:00Z',
+      updatedAt: '2026-09-09T10:45:00Z',
+    );
+    final completed = _job(
+      id: 'completed',
+      status: 'completed',
+      createdAt: '2026-09-09T11:20:00Z',
+      updatedAt: '2026-09-09T11:40:00Z',
+      completedAt: '2026-09-09T11:40:00Z',
+    );
+
+    expect(currentFailedJobs([failed, completed]), isEmpty);
+  });
+
+  test('an unresolved failure remains a current attention item', () {
+    final completedBeforeFailure = _job(
+      id: 'completed',
+      status: 'completed',
+      createdAt: '2026-09-09T10:00:00Z',
+      updatedAt: '2026-09-09T10:10:00Z',
+      completedAt: '2026-09-09T10:10:00Z',
+    );
+    final failed = _job(
+      id: 'failed',
+      status: 'failed',
+      createdAt: '2026-09-09T10:40:00Z',
+      updatedAt: '2026-09-09T10:45:00Z',
+    );
+
+    expect(currentFailedJobs([completedBeforeFailure, failed]), [failed]);
+  });
+
+  test('client separates sync scope from paused schema inventory', () {
+    final agent = AdminAgent.fromJson({
+      'clientName': 'client-a',
+      'tables': [
+        {'table': 'db::bu000', 'enabled': true, 'status': 'Completed'},
+        {'table': 'db::ce000', 'enabled': true, 'status': 'Completed'},
+        {'table': 'db::unused', 'enabled': false, 'status': 'Paused'},
+        {'table': 'db::broken', 'enabled': false, 'status': 'Failed'},
+      ],
+    });
+
+    expect(agent.syncScopeTables.map((table) => table.table), [
+      'db::bu000',
+      'db::ce000',
+      'db::broken',
+    ]);
+    expect(agent.pausedDiscoveredTableCount, 1);
   });
 
   test('client exposes its durable latest completed sync duration', () {

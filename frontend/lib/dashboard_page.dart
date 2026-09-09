@@ -5623,7 +5623,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget? _buildAttentionPanel() {
     final state = _state;
     if (state == null) return null;
-    final failed = state.jobs.where((j) => j.status.toLowerCase() == 'failed');
+    final failed = currentFailedJobs(state.jobs);
     final gate = state.syncGate;
     if (failed.isEmpty && gate.decisionCount == 0 && gate.resolvingCount == 0) {
       return null;
