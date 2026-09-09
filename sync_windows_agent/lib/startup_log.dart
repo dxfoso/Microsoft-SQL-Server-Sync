@@ -10,6 +10,18 @@ const int _maxRetainedAgentLogChars = 40 * 1024;
 final String _agentLogSessionId =
     '${DateTime.now().toUtc().toIso8601String()}-${pid.toString()}';
 
+const Set<String> _routineHighVolumeDebugEvents = <String>{
+  'control_plane.request.started',
+  'control_plane.request.completed',
+  'sqlcmd.started',
+  'sqlcmd.completed',
+  'sync.upload.chunk.completed',
+};
+
+bool shouldRetainAgentDiagnostic(String event, AgentLogLevel level) =>
+    level != AgentLogLevel.debug ||
+    !_routineHighVolumeDebugEvents.contains(event.trim());
+
 File _agentLogFile() {
   final executableDirectory = File(Platform.resolvedExecutable).parent;
   return File(
@@ -114,6 +126,9 @@ void logAgentDiagnostic(
   Object? error,
   StackTrace? stackTrace,
 }) {
+  if (!shouldRetainAgentDiagnostic(event, level)) {
+    return;
+  }
   try {
     final logFile = _agentLogFile();
     final safeContext = <String, dynamic>{};

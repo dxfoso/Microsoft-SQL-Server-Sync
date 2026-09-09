@@ -17,7 +17,6 @@ if (-not $testRoot.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnor
     throw "Unsafe supervisor test path: $testRoot"
 }
 
-$supervisorProcess = $null
 $testInstall = Join-Path $testRoot 'portable client with spaces'
 New-Item -Path $testInstall -ItemType Directory -Force | Out-Null
 try {
@@ -58,51 +57,23 @@ exit 0
         throw 'The independent request log did not record the update lifecycle.'
     }
 
-    $supervisorProcess = Start-Process -FilePath 'powershell.exe' `
-        -ArgumentList @(
-            '-NoProfile',
-            '-ExecutionPolicy', 'Bypass',
-            '-WindowStyle', 'Hidden',
-            '-File', ('"{0}"' -f $testSupervisor),
-            '-SkipUpdate',
-            '-SkipObsoleteRetirement'
-        ) `
-        -WorkingDirectory $testInstall `
-        -WindowStyle Hidden `
-        -PassThru
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+        -File $testSupervisor `
+        -RunOnce `
+        -SkipUpdate `
+        -SkipObsoleteRetirement
+    if ($LASTEXITCODE -ne 0) {
+        throw "Incomplete-install supervisor RunOnce failed with exit code $LASTEXITCODE."
+    }
     $supervisorLogPath = Join-Path $testInstall 'sync_windows_agent_supervisor.log'
-    $supervisorLog = ''
-    # Docker/SQL verification can saturate this workstation immediately before
-    # the fixture starts. Keep the assertion bounded but allow a loaded Windows
-    # host enough time to initialize a fresh hidden PowerShell process.
-    $logDeadline = [DateTime]::UtcNow.AddSeconds(30)
-    do {
-        Start-Sleep -Milliseconds 200
-        if ($supervisorProcess.HasExited) {
-            throw "Supervisor exited while the client executable was absent. exit=$($supervisorProcess.ExitCode)"
-        }
-        if (Test-Path -LiteralPath $supervisorLogPath -PathType Leaf) {
-            try {
-                $supervisorLog = Get-Content -LiteralPath $supervisorLogPath -Raw
-            }
-            catch [System.IO.IOException] {
-                # The supervisor may be appending this exact line. Keep the
-                # existing bounded deadline and retry the read after 200 ms.
-            }
-        }
-    } while ($supervisorLog -notmatch 'Agent install is incomplete; launch suppressed' -and [DateTime]::UtcNow -lt $logDeadline)
-
+    $supervisorLog = Get-Content -LiteralPath $supervisorLogPath -Raw
     if ($supervisorLog -notmatch 'Agent install is incomplete; launch suppressed') {
         throw 'The supervisor did not log incomplete-install launch suppression.'
     }
 
-    Write-Host "PASS user-stop update suppression, independent request logging, and incomplete-install launch suppression pid=$($supervisorProcess.Id)"
+    Write-Host 'PASS user-stop update suppression, independent request logging, and deterministic incomplete-install launch suppression'
 }
 finally {
-    if ($null -ne $supervisorProcess -and -not $supervisorProcess.HasExited) {
-        Stop-Process -Id $supervisorProcess.Id -Force -ErrorAction SilentlyContinue
-    }
-    Start-Sleep -Milliseconds 300
     if ($testRoot.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
     }

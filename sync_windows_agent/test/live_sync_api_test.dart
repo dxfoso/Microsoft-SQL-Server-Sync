@@ -4254,6 +4254,74 @@ void main() {
   );
 
   test(
+    'winner-policy download rejects candidate rows when none are accepted',
+    () async {
+      final candidateOperationId = 'a' * 64;
+      final acceptedOperationId = 'b' * 64;
+      final payloadBytes = utf8.encode(
+        jsonEncode([
+          {
+            'Id': '1',
+            'Name': 'candidate',
+            '__sync_operation_id': candidateOperationId,
+          },
+        ]),
+      );
+      final client = _ScriptedClient(
+        responseForRequest:
+            (name, args, callIndex) => (
+              statusCode: 200,
+              body: {
+                'status': 'success',
+                'value': {
+                  'done': true,
+                  'totalRowCount': 1,
+                  'payloadBase64': base64Encode(payloadBytes),
+                  'snapshot': {
+                    'id': 'batch-rejected-winner-page',
+                    'clientName': 'server-merge',
+                    'table': 'any_database::items',
+                    'createdAt': '2026-09-09T00:00:00Z',
+                    'rowCount': 1,
+                    'checksum': 'candidate-page',
+                    'snapshotBytes': payloadBytes.length,
+                    'columns': ['Id', 'Name'],
+                    'rows': const [],
+                    'sourceJobId': 'job-rejected-winner-page',
+                    'isDelta': false,
+                    'canonicalFullMerge': true,
+                    'mergeParticipantCount': 2,
+                    'winnerPolicyApplied': true,
+                    'acceptedOperationIds': [acceptedOperationId],
+                  },
+                },
+              },
+            ),
+      );
+      final api = AgentControlPlaneClient(
+        client: client,
+        baseUrl: 'https://example.com/call',
+      );
+
+      await expectLater(
+        api.downloadMultiWriterDelta(
+          'job-rejected-winner-page',
+          batchId: 'batch-rejected-winner-page',
+          protocolVersion: kSyncProtocolVersion,
+          syncEpoch: 'epoch-test',
+        ),
+        throwsA(
+          isA<AgentControlPlaneException>().having(
+            (error) => error.message,
+            'message',
+            contains('supplied candidate rows but accepted none'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
     'multi-writer download reasserts durable tombstone over zombie full row',
     () async {
       final acceptedId = 'a' * 64;

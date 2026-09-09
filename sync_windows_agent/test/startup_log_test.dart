@@ -2,6 +2,41 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sync_windows_agent/startup_log.dart';
 
 void main() {
+  test(
+    'retains semantic and failure events but drops routine success noise',
+    () {
+      expect(
+        shouldRetainAgentDiagnostic(
+          'sync.download.buffered',
+          AgentLogLevel.info,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldRetainAgentDiagnostic(
+          'control_plane.request.failed',
+          AgentLogLevel.error,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldRetainAgentDiagnostic('sqlcmd.completed', AgentLogLevel.error),
+        isTrue,
+      );
+      expect(
+        shouldRetainAgentDiagnostic('sqlcmd.completed', AgentLogLevel.debug),
+        isFalse,
+      );
+      expect(
+        shouldRetainAgentDiagnostic(
+          'control_plane.request.completed',
+          AgentLogLevel.debug,
+        ),
+        isFalse,
+      );
+    },
+  );
+
   test('redacts bearer tokens, passwords, cookies, and URL credentials', () {
     final redacted = redactAgentLogText(
       'Authorization: Bearer abc.def.ghi '

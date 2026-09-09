@@ -17,7 +17,7 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
     def test_every_catalog_incident_has_existing_automated_coverage(self):
         document = ISSUES.read_text(encoding="utf-8")
         rows = [line for line in document.splitlines() if line.startswith("| INC-")]
-        expected_ids = {f"INC-{number:03d}" for number in range(1, 675)}
+        expected_ids = {f"INC-{number:03d}" for number in range(1, 680)}
 
         observed_ids = set()
 
@@ -1542,12 +1542,17 @@ class IncidentRegressionCatalogTests(unittest.TestCase):
 
     def test_incomplete_install_fixture_waits_for_agent_validation(self):
         test_script = read_text("tests/test_windows_supervisor.ps1")
-        lifecycle_launch = test_script.split("$supervisorProcess = Start-Process", 1)[1]
+        lifecycle_launch = test_script.split(
+            'throw \'The independent request log did not record the update lifecycle.\'',
+            1,
+        )[1]
 
         self.assertIn("Agent install is incomplete; launch suppressed", lifecycle_launch)
-        self.assertNotIn("'-SkipAgentStart'", lifecycle_launch)
-        self.assertIn("$logDeadline = [DateTime]::UtcNow.AddSeconds(30)", lifecycle_launch)
-        self.assertIn("do {", lifecycle_launch)
+        self.assertNotIn("-SkipAgentStart", lifecycle_launch)
+        self.assertIn("-RunOnce", lifecycle_launch)
+        self.assertIn("-SkipUpdate", lifecycle_launch)
+        self.assertNotIn("Start-Process", lifecycle_launch)
+        self.assertNotIn("Start-Sleep", lifecycle_launch)
         self.assertIn("isolated_supervisor_fixture.ps1", test_script)
 
     def test_client_updater_url_is_immutable_per_release(self):

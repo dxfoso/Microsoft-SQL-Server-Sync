@@ -1407,6 +1407,9 @@ class AgentControlPlaneClient {
     final mergedRows = <Map<String, String?>>[];
     var mergedRowCount = 0;
     var totalSnapshotBytes = 0;
+    var winnerPolicyAppliedToAnyPage = false;
+    var winnerPolicyCandidateRowCount = 0;
+    var winnerPolicyAcceptedRowCount = 0;
     while (true) {
       checkCancelled?.call();
       final resumed = pageIndex < cachedPages.length;
@@ -1505,6 +1508,11 @@ class AgentControlPlaneClient {
       );
       final winnerPolicyApplied =
           snapshotPayload['winnerPolicyApplied'] == true;
+      winnerPolicyAppliedToAnyPage =
+          winnerPolicyAppliedToAnyPage || winnerPolicyApplied;
+      if (winnerPolicyApplied) {
+        winnerPolicyCandidateRowCount += snapshot.rows.length;
+      }
       final acceptedOperationIds =
           (snapshotPayload['acceptedOperationIds'] as List<dynamic>? ??
                   const <dynamic>[])
@@ -1614,6 +1622,9 @@ class AgentControlPlaneClient {
             };
           })
           .toList(growable: false);
+      if (winnerPolicyApplied) {
+        winnerPolicyAcceptedRowCount += orderedRows.length;
+      }
       snapshot = snapshot.copyWith(
         rows: orderedRows,
         rowCount: orderedRows.length,
@@ -1648,6 +1659,27 @@ class AgentControlPlaneClient {
             firstSnapshot.canonicalFullMerge && !mergedIsDelta
                 ? _deduplicateCanonicalFullMergeRows(mergedRows)
                 : mergedRows;
+        logAgentDiagnostic(
+          'sync.download.winner_filter_completed',
+          context: {
+            'jobId': jobId,
+            'batchId': batchId,
+            'table': firstSnapshot.table,
+            'pageCount': pageIndex,
+            'winnerPolicyApplied': winnerPolicyAppliedToAnyPage,
+            'candidateRowCount': winnerPolicyCandidateRowCount,
+            'acceptedRowCount': winnerPolicyAcceptedRowCount,
+            'canonicalRowCount':
+                onChunk == null ? canonicalRows.length : mergedRowCount,
+          },
+        );
+        if (winnerPolicyAppliedToAnyPage &&
+            winnerPolicyCandidateRowCount > 0 &&
+            winnerPolicyAcceptedRowCount == 0) {
+          throw const AgentControlPlaneException(
+            'Winner-policy download supplied candidate rows but accepted none. The target was not changed and the operation will retry safely.',
+          );
+        }
         return firstSnapshot.copyWith(
           rowCount: onChunk == null ? canonicalRows.length : mergedRowCount,
           rows: onChunk == null ? canonicalRows : const [],
