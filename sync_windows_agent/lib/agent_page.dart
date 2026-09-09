@@ -10601,11 +10601,78 @@ COMMIT TRANSACTION;
     required List<Map<String, dynamic>> rows,
     Future<void> Function(int loadedRows, int totalRows)? onLookupStageProgress,
   }) async {
-    final upserts = rows
+    dynamic valueForColumn(Map<String, dynamic> row, String columnName) {
+      final normalizedName = columnName.toLowerCase();
+      for (final entry in row.entries) {
+        if (entry.key.toLowerCase() == normalizedName) {
+          return entry.value;
+        }
+      }
+      return null;
+    }
+
+    var comparisonRows = rows;
+    if (schema.trim().toLowerCase() == 'dbo' &&
+        table.trim().toLowerCase() == 'er000') {
+      final parentGuids = <String, Map<String, dynamic>>{};
+      for (final row in rows.where((row) => row['__sync_op'] != 'D')) {
+        final value = valueForColumn(row, 'ParentGUID');
+        final normalized = value?.toString().trim().toLowerCase() ?? '';
+        if (normalized.isNotEmpty) {
+          parentGuids[normalized] = {'GUID': value};
+        }
+      }
+      if (parentGuids.isNotEmpty) {
+        final headerColumns = (await _querySyncColumnDefinitions(
+              profile: profile,
+              database: database,
+              schema: 'dbo',
+              table: 'bu000',
+            ))
+            .where((column) {
+              final name = column.name.toLowerCase();
+              return name == 'guid' || name == 'number';
+            })
+            .toList(growable: false);
+        if (headerColumns.length != 2) {
+          throw StateError(
+            'Al-Ameen relation comparison requires dbo.bu000(GUID, Number).',
+          );
+        }
+        final headers = await _fetchRowsByPrimaryKeys(
+          operationId: '${operationId}_parent_headers',
+          profile: profile,
+          database: database,
+          schema: 'dbo',
+          table: 'bu000',
+          columns: headerColumns,
+          primaryKeyColumns: const ['GUID'],
+          keyRows: parentGuids.values.toList(growable: false),
+          onStageProgress: null,
+        );
+        final parentNumberByGuid = <String, dynamic>{};
+        for (final header in headers) {
+          final guid =
+              valueForColumn(header, 'GUID')?.toString().trim().toLowerCase();
+          final number = valueForColumn(header, 'Number');
+          if (guid != null && guid.isNotEmpty && number != null) {
+            parentNumberByGuid[guid] = number;
+          }
+        }
+        comparisonRows = normalizeAlameenDerivedComparisonRows(
+          schema: schema,
+          table: table,
+          rows: rows,
+          parentNumberByGuid: parentNumberByGuid,
+        );
+      }
+    }
+
+    final upserts = comparisonRows
         .where((row) => row['__sync_op'] != 'D')
         .toList(growable: false);
     if (upserts.isEmpty) {
-      return rows;
+      return comparisonRows;
     }
     final targetRows = await _fetchRowsByPrimaryKeys(
       operationId: operationId,
@@ -10625,7 +10692,7 @@ COMMIT TRANSACTION;
           primaryKeyColumns,
         ): canonicalSqlSyncRowSha256(columns, row),
     };
-    return rows
+    return comparisonRows
         .where((row) {
           if (row['__sync_op'] == 'D') {
             return true;

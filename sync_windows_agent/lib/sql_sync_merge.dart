@@ -28,6 +28,56 @@ List<String> sqlSyncFingerprintTablesAfterApply({
   return List<String>.unmodifiable(tables);
 }
 
+/// Converts transported Al-Ameen relation rows into the values expected to
+/// exist physically in SQL Server.
+///
+/// `er000.ParentNumber` is a redundant copy of `bu000.Number`; the permanent
+/// relationship is `er000.ParentGUID -> bu000.GUID`. Number reservation can
+/// intentionally make the transported value stale, so comparison and
+/// post-commit verification derive it from the target header.
+List<Map<String, dynamic>> normalizeAlameenDerivedComparisonRows({
+  required String schema,
+  required String table,
+  required List<Map<String, dynamic>> rows,
+  required Map<String, dynamic> parentNumberByGuid,
+}) {
+  if (schema.trim().toLowerCase() != 'dbo' ||
+      table.trim().toLowerCase() != 'er000' ||
+      parentNumberByGuid.isEmpty) {
+    return rows;
+  }
+
+  String? matchingKey(Map<String, dynamic> row, String name) {
+    final normalizedName = name.toLowerCase();
+    for (final key in row.keys) {
+      if (key.toLowerCase() == normalizedName) {
+        return key;
+      }
+    }
+    return null;
+  }
+
+  return rows
+      .map((row) {
+        if (row['__sync_op'] == 'D') {
+          return row;
+        }
+        final parentGuidKey = matchingKey(row, 'ParentGUID');
+        final parentNumberKey = matchingKey(row, 'ParentNumber');
+        if (parentGuidKey == null || parentNumberKey == null) {
+          return row;
+        }
+        final parentGuid = row[parentGuidKey]?.toString().trim().toLowerCase();
+        final derivedNumber = parentNumberByGuid[parentGuid];
+        if (parentGuid == null || parentGuid.isEmpty || derivedNumber == null) {
+          return row;
+        }
+        return Map<String, dynamic>.from(row)
+          ..[parentNumberKey] = derivedNumber;
+      })
+      .toList(growable: false);
+}
+
 /// Transport-only proof that a delete inside a canonical full merge is the
 /// server-validated reassertion of an existing durable explicit tombstone.
 /// Raw snapshot rows cannot create this trust marker; [live_sync_api.dart]

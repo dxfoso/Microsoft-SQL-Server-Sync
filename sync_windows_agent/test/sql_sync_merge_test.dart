@@ -1286,4 +1286,35 @@ void main() {
       );
     },
   );
+
+  test('Al-Ameen er000 verification derives redundant parent number', () {
+    final rows = <Map<String, dynamic>>[
+      {
+        'GUID': 'relation-1',
+        'ParentGUID': 'HEADER-1',
+        'ParentNumber': 2322,
+        'Value': 'kept',
+      },
+      {'GUID': 'relation-2', 'ParentGUID': 'missing-header', 'ParentNumber': 7},
+      {
+        'GUID': 'relation-3',
+        'ParentGUID': 'HEADER-1',
+        'ParentNumber': 2322,
+        '__sync_op': 'D',
+      },
+    ];
+
+    final normalized = normalizeAlameenDerivedComparisonRows(
+      schema: 'dbo',
+      table: 'er000',
+      rows: rows,
+      parentNumberByGuid: const {'header-1': 2323},
+    );
+
+    expect(normalized[0]['ParentNumber'], 2323);
+    expect(normalized[0]['Value'], 'kept');
+    expect(normalized[1]['ParentNumber'], 7);
+    expect(normalized[2]['ParentNumber'], 2322);
+    expect(rows[0]['ParentNumber'], 2322);
+  });
 }

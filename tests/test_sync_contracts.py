@@ -2713,6 +2713,25 @@ class SyncContractsTests(unittest.TestCase):
             commit.index("await _controlPlaneClient.completeJob("),
         )
 
+    def test_er000_comparison_derives_redundant_number_from_target_header(self):
+        agent = read_text("sync_windows_agent/lib/agent_page.dart")
+        merge = read_text("sync_windows_agent/lib/sql_sync_merge.dart")
+        comparison = agent.split(
+            "Future<List<Map<String, dynamic>>> _rowsWhoseContentChanged(", 1
+        )[1].split(
+            "Future<List<Map<String, dynamic>>> _fetchRowsByPrimaryKeys(", 1
+        )[0]
+
+        self.assertIn("table.trim().toLowerCase() == 'er000'", comparison)
+        self.assertIn("_querySyncColumnDefinitions", comparison)
+        self.assertIn("table: 'bu000'", comparison)
+        self.assertIn("primaryKeyColumns: const ['GUID']", comparison)
+        self.assertIn("normalizeAlameenDerivedComparisonRows", comparison)
+        self.assertIn("comparisonRows", comparison)
+        self.assertIn("row['__sync_op'] == 'D'", merge)
+        self.assertIn("parentNumberByGuid[parentGuid]", merge)
+        self.assertNotIn("UPDATE ", comparison)
+
     def test_multi_writer_download_resolves_each_durable_marker_exactly(self):
         control_plane = read_text("business/control_plane.tru")
         download = control_plane.split("function jobs_multi_writer_download(", 1)[1].split(

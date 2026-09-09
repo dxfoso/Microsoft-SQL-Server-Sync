@@ -2,7 +2,7 @@
 
 ## Second isolated Sales collision verification (2026-09-09)
 
-Overall: **98% complete. The simplified atomic-manifest server fix remains healthy at commit `0066b9097544fe31a66f0157fa987b9456e058af`. Both eligible clients installed `1.0.335+339`; stale-stage recovery worked and exposed INC-741's final unbalanced table-local scratch object. Client `1.0.336+340` now gives every atomic table batch balanced create/use/drop ownership without adding another subsystem. Verification passes: 607 repository tests, 255 Flutter tests, the complete 36-scenario disposable SQL Server suite, and Standard 9/9 in 652 seconds. Publication, installation, and automatic completion of the retained `_SyncLab` group remain. Automatic scheduling is paused and Velvet Home is disabled/untouched; no user action is required.**
+Overall: **98% complete. The simplified atomic-manifest server fix remains healthy at commit `0066b9097544fe31a66f0157fa987b9456e058af`. Both eligible clients installed `1.0.336+340`; the complete atomic group then committed but correctly remained unacknowledged because post-commit verification compared derived `er000.ParentNumber` with its stale transported copy. INC-745 fixes that mismatch with one effective-row normalization based on permanent `ParentGUID`, without adding another conflict subsystem. Client `1.0.337+341` passes 608 repository tests, 256 Flutter tests, the complete 36-scenario disposable SQL Server suite, and Standard 9/9 in 638 seconds. Publication, installation, and automatic completion of the retained `_SyncLab` group remain. Automatic scheduling is paused and Velvet Home is disabled/untouched; no user action is required.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -19,8 +19,9 @@ Overall: **98% complete. The simplified atomic-manifest server fix remains healt
 | Fix SQL Server GUID aggregation in the operation boundary | Done: client `1.0.333+337` is published, startup-verified, and current on both eligible clients; every grouped upload completed | 100% |
 | Recompile heterogeneous table merges without weakening atomicity | Done in `1.0.334+338`: the invalid-column error is absent on both real lab clients | 100% |
 | Recover a durable stage removed by an older failed attempt | Done in `1.0.335+339`: both clients automatically rebuilt the missing stage from cached immutable downloads | 100% |
-| Balance every table-local atomic scratch object | Implemented and fully verified in `1.0.336+340`: each table drops its protected-key and incoming-key scratch sets before the next table compiles | 90% |
-| Prove both Sales exist and all ten mapped tables converge | Controlled uploads completed; grouped downloads are retained at their all-or-nothing apply boundary pending the corrected client | 70% |
+| Balance every table-local atomic scratch object | Done and live-proven in `1.0.336+340`: the group passed every SQL merge and reached post-commit verification | 100% |
+| Compare derived Al-Ameen relation numbers by permanent parent identity | Implemented and fully verified in `1.0.337+341`: `er000.ParentNumber` is derived from target `bu000` by `ParentGUID` before hashing | 90% |
+| Prove both Sales exist and all ten mapped tables converge | Controlled uploads remain retained; the committed group stayed unacknowledged after the safe verification mismatch and will retry with the corrected client | 75% |
 | Resume automatic scheduling | Pending convergence proof; it remains intentionally paused | 0% |
 
 Current safety state: this is an explicitly isolated `AmnDb048_SyncLab` test on `alshallan2` and `velvet factory`; `velvet home` remains disabled and ignored. Global automatic sync is paused. Synchronization will not resume until the exact corrected server/client repairs both copies to 1,932 `bu000` rows and 2,273 `ce000` rows and all ten physical fingerprints match.
