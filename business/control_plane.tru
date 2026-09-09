@@ -13743,7 +13743,6 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   const completingOperationGroup = status.trim().toLowerCase() == 'completed' &&
     string.from(job.direction).trim() == 'download' &&
     storedOperationGroupId.length != 0;
-  let validatedOperationGroupResults = [];
   if (completingOperationGroup) {
     const expectedOperationGroupTables = job.operationGroupTables ?? [];
     const suppliedOperationGroupResults = operationGroupResults ?? [];
@@ -13792,7 +13791,6 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
         return raw_json_error(409, 'operation group durable jobs do not match the manifest');
       }
     }
-    validatedOperationGroupResults = suppliedOperationGroupResults;
   }
 
   const automaticNumberFullUnionRetry =
@@ -13812,15 +13810,6 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
   if (snapshotBytes != null && snapshotBytes >= 0) {
     nextSnapshotBytes = snapshotBytes;
   }
-  let completedRowCount = rowCount;
-  if (completingOperationGroup) {
-    for (const result of validatedOperationGroupResults) {
-      if (string.from(result.table).trim() == string.from(job.table).trim()) {
-        completedRowCount = int.from(result.rowCount ?? 0);
-        nextSnapshotBytes = int.from(result.snapshotBytes ?? 0);
-      }
-    }
-  }
   const updated = db.update(SyncJob, { id: jobId }, {
     clientName: job.clientName,
     sourceClientName: job.sourceClientName,
@@ -13834,7 +13823,7 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     publisherPassword: job.publisherPassword,
     status,
     progress,
-    rowCount: completedRowCount,
+    rowCount,
     snapshotBytes: nextSnapshotBytes,
     snapshotCreatedAt: nextSnapshotCreatedAt,
     snapshotId: nextSnapshotId,
@@ -13859,28 +13848,23 @@ function jobs_complete(jobId: string, status: string = 'completed', progress: in
     // transaction before sending this acknowledgement. Close all download
     // rows for this client together so a lost response/restart cannot leave a
     // committed business operation waiting for an already-finished sibling.
-    for (const result of validatedOperationGroupResults) {
-      db.updateMany(SyncJob, {
-        ownerUserId: job.ownerUserId,
-        clientName: job.clientName,
-        subscriberClientName: job.subscriberClientName,
-        operationGroupId: completedOperationGroupId,
-        table: string.from(result.table),
-        direction: 'download',
-        status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
-      }, {
-        status: 'completed',
-        progress: 100,
-        rowCount: int.from(result.rowCount ?? 0),
-        snapshotBytes: int.from(result.snapshotBytes ?? 0),
-        completedAt,
-        message: 'Atomic Al-Ameen operation group applied successfully.',
-        error: null,
-        rejectedRowCount: 0,
-        rejectionSummary: null,
-        updatedAt: completedAt
-      });
-    }
+    db.updateMany(SyncJob, {
+      ownerUserId: job.ownerUserId,
+      clientName: job.clientName,
+      subscriberClientName: job.subscriberClientName,
+      operationGroupId: completedOperationGroupId,
+      direction: 'download',
+      status: { in: ['queued', 'waiting', 'running', 'snapshotting', 'uploading', 'downloading', 'applying'] }
+    }, {
+      status: 'completed',
+      progress: 100,
+      completedAt,
+      message: 'Atomic Al-Ameen operation group applied successfully; detailed row counts are carried by the acknowledgement job.',
+      error: null,
+      rejectedRowCount: 0,
+      rejectionSummary: null,
+      updatedAt: completedAt
+    });
   }
   if (status.trim().toLowerCase() == 'failed' ||
       (rejectedRowCount != null && rejectedRowCount > 0)) {

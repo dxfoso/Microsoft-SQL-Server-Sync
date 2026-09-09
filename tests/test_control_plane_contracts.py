@@ -3337,7 +3337,11 @@ class ControlPlaneContractsTests(unittest.TestCase):
         self.assertIn(
             "operation group durable jobs do not match the manifest", completion
         )
-        self.assertIn("rowCount: int.from(result.rowCount ?? 0)", completion)
+        self.assertEqual(completion.count("db.updateMany(SyncJob"), 1)
+        self.assertIn(
+            "detailed row counts are carried by the acknowledgement job",
+            completion,
+        )
         self.assertIn(
             "function alameen_business_operation_tables(tables: array<string>): array<string>",
             source,

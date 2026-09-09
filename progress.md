@@ -13,7 +13,7 @@ Overall: **96% complete. Root cause INC-686 is fixed: job delivery omitted the s
 | Publish and install the corrected Windows client | Done: release `1.0.329+333` is published, portable startup verified, and current on both eligible clients | 100% |
 | Recover durable collision reservations and winner registers | Done: server evidence resolves all markers and retains the 1617/2323 reservations | 100% |
 | Preserve the atomic operation manifest in every client job | Done in INC-686 with exact job-selector and client parsing coverage | 100% |
-| Reject partial group acknowledgement and retain per-table results | Done: exact ID/table-set proof, subscriber-scoped completion, and row/byte evidence | 100% |
+| Reject partial group acknowledgement with one simple bulk transition | Done: exact ID/table-set proof, subscriber-scoped completion, and aggregate row/byte evidence on the acknowledgement | 100% |
 | Pass complete release gates | Done: 604 Python, 253 Flutter, Docker 36 scenarios, and Standard 9/9 in 592 seconds | 100% |
 | Publish/deploy client `1.0.332+336` and exact server commit | In progress | 70% |
 | Prove both Sales exist and all ten mapped tables converge | Pending controlled retry; safe state remains 1,931 `bu000` and 2,272 `ce000` rows per client with different checksums | 50% |
