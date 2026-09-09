@@ -2667,6 +2667,13 @@ class SyncContractsTests(unittest.TestCase):
         )[0]
         self.assertIn("db.selectOne(SyncRowWinner", helper)
         self.assertIn("operationId", helper)
+        exact_id_helper = helper.split(
+            "function sync_row_winner_find_durable_by_id(", 1
+        )[1]
+        self.assertIn("db.selectOne(SyncRowWinner, { id })", exact_id_helper)
+        self.assertIn("winner.ownerUserId", exact_id_helper)
+        self.assertIn("winner.table", exact_id_helper)
+        self.assertNotIn("db.selectOne(SyncRowWinner, {\n    ownerUserId", exact_id_helper)
         self.assertIn("durableWinner = sync_row_winner_find_durable_by_id(", download)
         self.assertIn("durableWinner = sync_row_winner_find_durable(", download)
         marker_loop = download.split(

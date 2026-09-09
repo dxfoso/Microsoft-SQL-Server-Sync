@@ -7657,11 +7657,17 @@ function sync_row_winner_find_durable(ownerUserId: string, table: string, operat
 }
 
 function sync_row_winner_find_durable_by_id(ownerUserId: string, table: string, id: string): map<json>? {
-  return db.selectOne(SyncRowWinner, {
-    ownerUserId,
-    table,
-    id
-  });
+  // `id` is the primary durable identity and already hashes owner + table +
+  // row identity. Resolve it through one primary-key lookup, then validate its
+  // scope explicitly. This avoids the runtime's unreliable multi-field JSON
+  // predicate while preserving tenant/table isolation.
+  const winner = db.selectOne(SyncRowWinner, { id });
+  if (winner == null ||
+      string.from(winner.ownerUserId).trim() != ownerUserId.trim() ||
+      string.from(winner.table).trim() != table.trim()) {
+    return null;
+  }
+  return winner;
 }
 
 // A comparison batch is deliberately upload-only. Clients capture complete,
