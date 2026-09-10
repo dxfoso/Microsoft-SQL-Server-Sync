@@ -102,7 +102,9 @@ $agentSummary = @($agents | ForEach-Object {
 [pscustomobject]@{
   automaticSyncPaused = $state.automaticSyncPaused
   gateStatus = $state.syncGate.status
-  gateIssueCount = @($state.syncGate.issues).Count
+  # The issue list intentionally retains resolved audit rows. Use the server's
+  # active count so a ready gate never looks blocked in operational summaries.
+  gateIssueCount = [int]$state.syncGate.issueCount
   activeJobCount = $activeJobs.Count
   failedJobCount = $failedJobs.Count
   allConverged = @($tableChecks | Where-Object { -not $_.rowsEqual -or -not $_.checksumEqual -or -not $_.completed -or $_.pending }).Count -eq 0

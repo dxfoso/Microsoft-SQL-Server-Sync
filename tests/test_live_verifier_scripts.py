@@ -4364,6 +4364,8 @@ class LiveVerifierScriptsTests(unittest.TestCase):
         self.assertIn("kubectl get secret $SecretName -n $Namespace -o json", source)
         self.assertIn("Invoke-ControlPlaneFunction -Name 'live_state'", source)
         self.assertIn("automaticSyncPaused = $state.automaticSyncPaused", source)
+        self.assertIn("gateIssueCount = [int]$state.syncGate.issueCount", source)
+        self.assertNotIn("gateIssueCount = @($state.syncGate.issues).Count", source)
         self.assertIn("allConverged =", source)
         self.assertIn("$tableParts[0] -ieq $agentDatabase", source)
         self.assertIn("$tableParts[-1] -ieq $tableName", source)

@@ -1,5 +1,18 @@
 # Progress
 
+## Automatic concurrent-Sales convergence (2026-09-10)
+
+Overall: **100% complete. The administrator pause remained cleared, both `_SyncLab` clients came online, and automatic synchronization preserved the independently created Sales on both clients. The bounded workflow first repaired `bu000` and `ce000`, applied the complete nine-table Sales graph atomically on both clients, then repaired the one missing `er000` relationship row after the configured retry boundary. All ten scoped tables now have equal row counts and v3 checksums, including `bu000=1,934`, `ce000=2,275`, and `er000=2,073`; active jobs are zero, failed jobs are zero, the gate is `Ready`, and disabled `velvet home` remained ignored.**
+
+| Step | Status | Progress |
+|---|---|---:|
+| Detect both independently created Sales | Done automatically after both Windows clients resumed heartbeats | 100% |
+| Resolve colliding document and voucher numbers | Done without choosing a primary client; both `bu000` and `ce000` rows were preserved | 100% |
+| Apply the complete Sales graph | Done atomically on both clients across the nine mapped operation tables | 100% |
+| Repair the remaining relationship projection | Done automatically at the configured retry boundary; `er000` converged at 2,073 rows | 100% |
+| Verify final state | Done: ten-table counts/checksums equal, no pending changes, no active/failed jobs, gate ready | 100% |
+| Correct retained-history diagnostic counting | Done: the read-only summary now reports only active gate issues | 100% |
+
 ## Current sync health separated from retained history (2026-09-09)
 
 Overall: **100% complete. Production commit `c778d63fbae2329890c10af93011c548cfbc95fb` now shows only the ten enrolled Al-Ameen tables by default and treats a failed job as current only until a later successful retry for the same client, table, and direction. The two old `pt000` failures remain in Sync Log as audit history but no longer appear as unresolved attention. Each client's 553 paused discovered tables remain safely excluded from synchronization and can be revealed with “Show 553 paused.” Both immutable workloads are ready, public health reports `ready=true` and `compile_errors=0`, `/clients` returns HTTP 200, and the existing Windows client update artifacts remain available.**
