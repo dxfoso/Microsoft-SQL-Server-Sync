@@ -1,5 +1,9 @@
 # Progress
 
+## AmnDB_190 SyncLab connection (2026-09-13)
+
+Overall: **Blocked only on one manual Al-Ameen descriptor correction. The copied SQL database is named `AmnDB_190_SyncLab`, but the Al-Ameen connection error proves its local descriptor requests `AmnDb190_SyncLab` (missing `_` after `DB`). Keep the SQL database unchanged and recreate/correct the Al-Ameen file entry to use the exact database name `AmnDB_190_SyncLab`. No synchronization or database mutation was performed.**
+
 ## Automatic concurrent-Sales convergence (2026-09-10)
 
 Overall: **100% complete. The administrator pause remained cleared, both `_SyncLab` clients came online, and automatic synchronization preserved the independently created Sales on both clients. The bounded workflow first repaired `bu000` and `ce000`, applied the complete nine-table Sales graph atomically on both clients, then repaired the one missing `er000` relationship row after the configured retry boundary. All ten scoped tables now have equal row counts and v3 checksums, including `bu000=1,934`, `ce000=2,275`, and `er000=2,073`; active jobs are zero, failed jobs are zero, the gate is `Ready`, and disabled `velvet home` remained ignored.**
