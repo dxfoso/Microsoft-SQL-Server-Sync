@@ -2527,6 +2527,9 @@ class SyncContractsTests(unittest.TestCase):
     def test_hidden_database_can_receive_scoped_access_and_must_be_verified(self):
         agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
         database_access = read_text("sync_windows_agent/lib/database_access.dart")
+        hidden_database_dialog = agent_page.split(
+            "Future<void> _showKnownDatabaseAccessDialog()", 1
+        )[1].split("Future<void> _loadDatabases({", 1)[0]
 
         self.assertIn("Connect a database not listed", agent_page)
         self.assertIn("Database not listed?", agent_page)
@@ -2539,6 +2542,8 @@ class SyncContractsTests(unittest.TestCase):
             "_databaseAccessIssueFor(requested.database) != null", agent_page
         )
         self.assertIn("maximum 128 characters", agent_page)
+        self.assertIn("is now available in the database list", hidden_database_dialog)
+        self.assertNotIn("_selectDatabase(database)", hidden_database_dialog)
         self.assertIn("systemDatabases", database_access)
         self.assertNotIn("GRANT VIEW ANY DATABASE", database_access)
 

@@ -1711,12 +1711,15 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
                                     return;
                                   }
                                   Navigator.of(dialogContext).pop();
-                                  await _selectDatabase(database);
                                   if (mounted) {
                                     ScaffoldMessenger.of(
                                       this.context,
                                     ).showSnackBar(
-                                      SnackBar(content: Text(result.message)),
+                                      SnackBar(
+                                        content: Text(
+                                          '$database is now available in the database list.',
+                                        ),
+                                      ),
                                     );
                                   }
                                 },
