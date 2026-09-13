@@ -2,7 +2,7 @@
 
 ## Alshallan2 hidden `AmnDb190` discovery (2026-09-13)
 
-Overall: **90% complete. Root cause confirmed: Al-Ameen opens `AmnDb190` on `DESKTOP-ALDNHIH\\SQLEXPRESS`, while SQL Sync uses Windows login `DESKTOP-ALDNHIH\\Toshiba`, and SQL Server does not expose that database to this login. Client `1.0.339+343` adds the least-privilege `Database not listed?` flow, fails closed unless access is verified, and deliberately does not change the active database after repair. Validation and replacement publication are in progress. The only remaining live action after release is the unavoidable Windows administrator/UAC approval on Alshallan2; no database rows or sync state have been changed.**
+Overall: **95% complete. Root cause confirmed: Al-Ameen opens `AmnDb190` on `DESKTOP-ALDNHIH\\SQLEXPRESS`, while SQL Sync uses Windows login `DESKTOP-ALDNHIH\\Toshiba`, and SQL Server does not expose that database to this login. Client `1.0.339+343` adds the least-privilege `Database not listed?` flow, fails closed unless access is verified, and deliberately does not change the active database after repair. It is published, portable-startup verified, and current on both eligible clients. Production commit `efbb6bbd482726bb4558f6f3f051dcab2b6e275b` has both exact immutable images ready; repeated health reports `ready=true`, `compile_errors=0`, web HTTP 200, and the final client manifest. The only remaining live action is the unavoidable Windows administrator/UAC approval on Alshallan2; no database rows or sync state have been changed.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -11,7 +11,7 @@ Overall: **90% complete. Root cause confirmed: Al-Ameen opens `AmnDb190` on `DES
 | Implement scoped hidden-database access recovery | Done; no server-wide catalog permission | 100% |
 | Prevent false success for absent/nonexistent databases | Done; requires a verified accessible status | 100% |
 | Add incident documentation and automated regressions | Done | 100% |
-| Validate, publish, install, and verify client update | Replacement safety release in progress | 70% |
+| Validate, publish, install, and verify client update | Done: final `1.0.339+343` is current on Alshallan2 and Velvet Factory | 100% |
 | Grant scoped access to `AmnDb190` on Alshallan2 | Waiting for the local Windows administrator/UAC approval | 0% |
 
 ## AmnDB_190 SyncLab connection (2026-09-13)
