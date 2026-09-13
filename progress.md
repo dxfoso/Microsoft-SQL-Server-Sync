@@ -2,7 +2,7 @@
 
 ## AmnDB_190 SyncLab connection (2026-09-13)
 
-Overall: **Blocked only on one manual Al-Ameen descriptor correction. The copied SQL database is named `AmnDB_190_SyncLab`, but the Al-Ameen connection error proves its local descriptor requests `AmnDb190_SyncLab` (missing `_` after `DB`). Keep the SQL database unchanged and recreate/correct the Al-Ameen file entry to use the exact database name `AmnDB_190_SyncLab`. No synchronization or database mutation was performed.**
+Overall: **Diagnosis corrected from authoritative live state. Velvet Factory is connected to local instance `DESKTOP-6MQFNA3\\SQL8` and selected database `AmnDb0190`; Alshallan2 is connected to its separate `.\\SQLEXPRESS` instance and remains on `AmnDb048_SyncLab`. No clone/restore record exists for the new source on Alshallan2, so copying an Al-Ameen directory could not make the SQL database discoverable there. The exact target identity for a lab clone of the selected source is `AmnDb0190_SyncLab`; neither `AmnDb190_SyncLab` nor `AmnDB_190_SyncLab` matches it. No synchronization or database mutation was performed.**
 
 ## Automatic concurrent-Sales convergence (2026-09-10)
 
