@@ -2,7 +2,7 @@
 
 ## Alshallan2 hidden `AmnDb190` discovery (2026-09-13)
 
-Overall: **80% complete. Root cause confirmed: Al-Ameen opens `AmnDb190` on `DESKTOP-ALDNHIH\\SQLEXPRESS`, while SQL Sync uses Windows login `DESKTOP-ALDNHIH\\Toshiba`, and SQL Server does not expose that database to this login. Client `1.0.338+342` now includes a least-privilege `Database not listed?` flow and fails closed unless access is verified after refresh. Automated validation, publication, installation, and live verification remain in progress. No production database or sync state has been changed.**
+Overall: **95% complete. Root cause confirmed: Al-Ameen opens `AmnDb190` on `DESKTOP-ALDNHIH\\SQLEXPRESS`, while SQL Sync uses Windows login `DESKTOP-ALDNHIH\\Toshiba`, and SQL Server does not expose that database to this login. Client `1.0.338+342` is published, startup-verified, and installed on both eligible clients. It now includes a least-privilege `Database not listed?` flow and fails closed unless access is verified after refresh. Production commit `f534a3303044695e6774c708cb0c52698fae2dbb` is healthy with both exact immutable images ready, `compile_errors=0`, web HTTP 200, and the client manifest preserved. The only remaining action is the unavoidable Windows administrator/UAC approval on Alshallan2; no database rows or sync state have been changed.**
 
 | Step | Status | Progress |
 |---|---|---:|
@@ -11,7 +11,8 @@ Overall: **80% complete. Root cause confirmed: Al-Ameen opens `AmnDb190` on `DES
 | Implement scoped hidden-database access recovery | Done; no server-wide catalog permission | 100% |
 | Prevent false success for absent/nonexistent databases | Done; requires a verified accessible status | 100% |
 | Add incident documentation and automated regressions | Done | 100% |
-| Validate, publish, install, and verify client update | In progress | 0% |
+| Validate, publish, install, and verify client update | Done: 610 Python tests, 256 Flutter tests, clean analysis, both live clients current | 100% |
+| Grant scoped access to `AmnDb190` on Alshallan2 | Waiting for the local Windows administrator/UAC approval | 0% |
 
 ## AmnDB_190 SyncLab connection (2026-09-13)
 
