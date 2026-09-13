@@ -1,5 +1,17 @@
 # Progress
 
+## `AmnDb190` first-Sales readiness check (2026-09-13)
+
+Overall: **BLOCKED at 70%. Do not create the sale yet. Both clients are online, SQL-connected, sync-enabled, and current on `1.0.339+343`; the gate is ready with zero active or failed jobs. However, Alshallan2 is on `AmnDb190` and Velvet Factory is on `AmnDb0190`. These are different database-qualified sync identities. All ten mapped tables have matching row counts but are disabled/queued with empty checksums and `Waiting for a safe all-client baseline`; fresh diagnostics contain no verified shared selected-table fingerprints. No sync job or SQL mutation was performed. Both clients must first select the exact same isolated database name and complete a ten-table fingerprint baseline.**
+
+| Step | Status | Progress |
+|---|---|---:|
+| Verify clients online, SQL-connected, and current | Done | 100% |
+| Verify sync gate and job state | Done: ready, zero active/failed jobs | 100% |
+| Verify exact selected database identity | Blocked: `AmnDb190` differs from `AmnDb0190` | 0% |
+| Verify mapped-table fingerprints | Blocked: checksums empty and baseline pending | 0% |
+| Approve first one-client Sales creation | Not approved until both blockers are cleared | 0% |
+
 ## Alshallan2 hidden `AmnDb190` discovery (2026-09-13)
 
 Overall: **95% complete. Root cause confirmed: Al-Ameen opens `AmnDb190` on `DESKTOP-ALDNHIH\\SQLEXPRESS`, while SQL Sync uses Windows login `DESKTOP-ALDNHIH\\Toshiba`, and SQL Server does not expose that database to this login. Client `1.0.339+343` adds the least-privilege `Database not listed?` flow, fails closed unless access is verified, and deliberately does not change the active database after repair. It is published, portable-startup verified, and current on both eligible clients. Production commit `efbb6bbd482726bb4558f6f3f051dcab2b6e275b` has both exact immutable images ready; repeated health reports `ready=true`, `compile_errors=0`, web HTTP 200, and the final client manifest. The only remaining live action is the unavoidable Windows administrator/UAC approval on Alshallan2; no database rows or sync state have been changed.**
