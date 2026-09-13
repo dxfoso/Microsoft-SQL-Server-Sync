@@ -1,5 +1,18 @@
 # Progress
 
+## Alshallan2 hidden `AmnDb190` discovery (2026-09-13)
+
+Overall: **80% complete. Root cause confirmed: Al-Ameen opens `AmnDb190` on `DESKTOP-ALDNHIH\\SQLEXPRESS`, while SQL Sync uses Windows login `DESKTOP-ALDNHIH\\Toshiba`, and SQL Server does not expose that database to this login. Client `1.0.338+342` now includes a least-privilege `Database not listed?` flow and fails closed unless access is verified after refresh. Automated validation, publication, installation, and live verification remain in progress. No production database or sync state has been changed.**
+
+| Step | Status | Progress |
+|---|---|---:|
+| Confirm SQL instance and exact database from Al-Ameen | Done | 100% |
+| Confirm the Sync Windows identity cannot discover `AmnDb190` | Done with fresh diagnostics | 100% |
+| Implement scoped hidden-database access recovery | Done; no server-wide catalog permission | 100% |
+| Prevent false success for absent/nonexistent databases | Done; requires a verified accessible status | 100% |
+| Add incident documentation and automated regressions | Done | 100% |
+| Validate, publish, install, and verify client update | In progress | 0% |
+
 ## AmnDB_190 SyncLab connection (2026-09-13)
 
 Overall: **Diagnosis corrected from authoritative live state. Velvet Factory is connected to local instance `DESKTOP-6MQFNA3\\SQL8` and selected database `AmnDb0190`; Alshallan2 is connected to its separate `.\\SQLEXPRESS` instance and remains on `AmnDb048_SyncLab`. No clone/restore record exists for the new source on Alshallan2, so copying an Al-Ameen directory could not make the SQL database discoverable there. The exact target identity for a lab clone of the selected source is `AmnDb0190_SyncLab`; neither `AmnDb190_SyncLab` nor `AmnDB_190_SyncLab` matches it. No synchronization or database mutation was performed.**

@@ -13,6 +13,21 @@ String windowsDatabaseLogin({
   return '$normalizedDomain\\$normalizedUsername';
 }
 
+String? normalizeDatabaseNameForScopedAccessGrant(String value) {
+  final database = value.trim();
+  if (database.isEmpty || database.length > 128) {
+    return null;
+  }
+  if (database.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)) {
+    return null;
+  }
+  const systemDatabases = {'master', 'model', 'msdb', 'tempdb'};
+  if (systemDatabases.contains(database.toLowerCase())) {
+    return null;
+  }
+  return database;
+}
+
 String buildWindowsDatabaseAccessGrantSql({
   required String database,
   required String login,

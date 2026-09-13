@@ -4,6 +4,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sync_windows_agent/database_access.dart';
 
 void main() {
+  test('validates exact names for scoped hidden-database access', () {
+    expect(
+      normalizeDatabaseNameForScopedAccessGrant('  AmnDb190  '),
+      'AmnDb190',
+    );
+    expect(normalizeDatabaseNameForScopedAccessGrant('master'), isNull);
+    expect(normalizeDatabaseNameForScopedAccessGrant('bad\nname'), isNull);
+    expect(normalizeDatabaseNameForScopedAccessGrant(''), isNull);
+    expect(
+      normalizeDatabaseNameForScopedAccessGrant(List.filled(129, 'x').join()),
+      isNull,
+    );
+  });
+
   test('builds the Windows login from the machine and user names', () {
     expect(
       windowsDatabaseLogin(

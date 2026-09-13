@@ -953,6 +953,14 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
     return null;
   }
 
+  bool _databaseHasVerifiedAccess(String database) {
+    return _databaseAccessStatuses.any(
+      (status) =>
+          status.database.toLowerCase() == database.toLowerCase() &&
+          status.hasAccess,
+    );
+  }
+
   String _databaseAccessGrantSql(DatabaseAccessIssue issue) {
     return buildWindowsDatabaseAccessGrantSql(
       database: issue.database,
@@ -1156,9 +1164,7 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
         );
       }
       final remaining = grantIssues
-          .where(
-            (requested) => _databaseAccessIssueFor(requested.database) != null,
-          )
+          .where((requested) => !_databaseHasVerifiedAccess(requested.database))
           .map((requested) => requested.database)
           .toList(growable: false);
       final granted = grantIssues
@@ -1590,6 +1596,156 @@ class _AgentDashboardPageState extends State<AgentDashboardPage> {
       );
     } finally {
       _databaseAccessDialogVisible = false;
+    }
+  }
+
+  Future<void> _showKnownDatabaseAccessDialog() async {
+    if (!mounted || _databaseAccessGrantBusy) {
+      return;
+    }
+    final controller = TextEditingController();
+    String? validationError;
+    String? grantError;
+    var granting = false;
+    try {
+      await showDialog<void>(
+        context: context,
+        builder:
+            (dialogContext) => StatefulBuilder(
+              builder:
+                  (context, setDialogState) => AlertDialog(
+                    title: const Text('Connect a database not listed'),
+                    content: SizedBox(
+                      width: 500,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Enter the exact database name shown in Al-Ameen. SQL Sync '
+                            'will request access only to that database on '
+                            '${_serverController.text.trim()}.',
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: controller,
+                            autofocus: true,
+                            enabled: !granting,
+                            decoration: InputDecoration(
+                              labelText: 'Exact database name',
+                              hintText: 'AmnDb190',
+                              errorText: validationError,
+                            ),
+                            onSubmitted:
+                                granting
+                                    ? null
+                                    : (_) => setDialogState(() {
+                                      validationError = null;
+                                    }),
+                          ),
+                          if (grantError != null) ...[
+                            const SizedBox(height: 12),
+                            SelectableText(
+                              grantError!,
+                              style: const TextStyle(color: Color(0xFF8A1C13)),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed:
+                            granting
+                                ? null
+                                : () => Navigator.of(dialogContext).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton.icon(
+                        onPressed:
+                            granting
+                                ? null
+                                : () async {
+                                  final database =
+                                      normalizeDatabaseNameForScopedAccessGrant(
+                                        controller.text,
+                                      );
+                                  if (database == null) {
+                                    setDialogState(() {
+                                      validationError =
+                                          'Enter a valid non-system database name (maximum 128 characters).';
+                                    });
+                                    return;
+                                  }
+                                  final issue = DatabaseAccessIssue(
+                                    server: _serverController.text.trim(),
+                                    database: database,
+                                    login: windowsDatabaseLogin(
+                                      domainOrMachine:
+                                          Platform.environment['USERDOMAIN'] ??
+                                          Platform.localHostname,
+                                      username:
+                                          Platform.environment['USERNAME'] ??
+                                          '',
+                                    ),
+                                    details:
+                                        'This database is hidden from the current Windows login.',
+                                  );
+                                  setDialogState(() {
+                                    granting = true;
+                                    validationError = null;
+                                    grantError = null;
+                                  });
+                                  final result =
+                                      await _grantDatabaseAccessWithWindowsUac(
+                                        issue,
+                                      );
+                                  if (!mounted || !dialogContext.mounted) {
+                                    return;
+                                  }
+                                  if (!result.success) {
+                                    setDialogState(() {
+                                      granting = false;
+                                      grantError = result.message;
+                                    });
+                                    return;
+                                  }
+                                  Navigator.of(dialogContext).pop();
+                                  await _selectDatabase(database);
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(
+                                      this.context,
+                                    ).showSnackBar(
+                                      SnackBar(content: Text(result.message)),
+                                    );
+                                  }
+                                },
+                        icon:
+                            granting
+                                ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                                : const Icon(
+                                  Icons.admin_panel_settings_rounded,
+                                  size: 17,
+                                ),
+                        label: Text(
+                          granting
+                              ? 'Waiting for Windows...'
+                              : 'Grant scoped access',
+                        ),
+                      ),
+                    ],
+                  ),
+            ),
+      );
+    } finally {
+      controller.dispose();
     }
   }
 
@@ -13487,6 +13643,14 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                     width: constraints.maxWidth.clamp(0, 360).toDouble(),
                     child: _buildDatabaseDropdown(),
                   ),
+                TextButton.icon(
+                  onPressed:
+                      _databaseAccessGrantBusy
+                          ? null
+                          : () => unawaited(_showKnownDatabaseAccessDialog()),
+                  icon: const Icon(Icons.add_link_rounded, size: 17),
+                  label: const Text('Database not listed?'),
+                ),
                 actions,
               ],
             ),
@@ -13506,6 +13670,14 @@ FROM ${_quoteIdentifier(database)}.${_quoteIdentifier(schema)}.${_quoteIdentifie
                   child: _buildDatabaseDropdown(),
                 ),
               ],
+              TextButton.icon(
+                onPressed:
+                    _databaseAccessGrantBusy
+                        ? null
+                        : () => unawaited(_showKnownDatabaseAccessDialog()),
+                icon: const Icon(Icons.add_link_rounded, size: 17),
+                label: const Text('Database not listed?'),
+              ),
               const Spacer(),
               const SizedBox(width: 12),
               actions,

@@ -2524,6 +2524,24 @@ class SyncContractsTests(unittest.TestCase):
         self.assertNotIn("return 'Needs input'", web_status)
         self.assertNotIn("return 'Repairing'", web_status)
 
+    def test_hidden_database_can_receive_scoped_access_and_must_be_verified(self):
+        agent_page = read_text("sync_windows_agent/lib/agent_page.dart")
+        database_access = read_text("sync_windows_agent/lib/database_access.dart")
+
+        self.assertIn("Connect a database not listed", agent_page)
+        self.assertIn("Database not listed?", agent_page)
+        self.assertIn("normalizeDatabaseNameForScopedAccessGrant", agent_page)
+        self.assertIn("_databaseHasVerifiedAccess", agent_page)
+        self.assertIn(
+            "!_databaseHasVerifiedAccess(requested.database)", agent_page
+        )
+        self.assertNotIn(
+            "_databaseAccessIssueFor(requested.database) != null", agent_page
+        )
+        self.assertIn("maximum 128 characters", agent_page)
+        self.assertIn("systemDatabases", database_access)
+        self.assertNotIn("GRANT VIEW ANY DATABASE", database_access)
+
     def test_table_comparison_uses_parallel_pages_and_virtualized_infinite_scroll(self):
         dialog = read_text("frontend/lib/table_comparison_dialog.dart")
         comparison = read_text("frontend/lib/table_comparison.dart")
